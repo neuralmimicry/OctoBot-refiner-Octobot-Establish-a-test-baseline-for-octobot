@@ -192,3 +192,15 @@ installer/
 
 # ai
 analysis/
+
+# project_solver ignore additions
+.refiner/
+.research_cache/
+project_solver_output/
+delivery_pipeline_output/
+.next/
+.nuxt/
+.turbo/
+coverage/
+.ruff_cache/
+.nox/
