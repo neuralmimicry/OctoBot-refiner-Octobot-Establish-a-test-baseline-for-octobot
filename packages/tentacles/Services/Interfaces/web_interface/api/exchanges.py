@@ -15,12 +15,39 @@
 #  License along with this library.
 import flask
 
+import octobot_trading.api as trading_api
+import octobot_services.interfaces.util as interfaces_util
 import tentacles.Services.Interfaces.web_interface.login as login
 import tentacles.Services.Interfaces.web_interface.models as models
 import tentacles.Services.Interfaces.web_interface.util as util
 
 
 def register(blueprint):
+    @blueprint.route("/exchanges")
+    @login.login_required_when_activated
+    def exchanges():
+        """Return the live exchange managers available to Gail.
+
+        The upstream web UI exposes exchange configuration through HTML pages,
+        but Gail needs a small machine-readable inventory to select the venue
+        used by the subsequent ticker and order calls.
+        """
+        result = []
+        for exchange_manager in interfaces_util.get_exchange_managers():
+            exchange_name = trading_api.get_exchange_name(exchange_manager)
+            exchange_id = trading_api.get_exchange_manager_id(exchange_manager)
+            result.append({
+                "name": exchange_name,
+                "exchange": exchange_name,
+                "id": exchange_id,
+                "exchange_id": exchange_id,
+                "enabled": True,
+                "trading": trading_api.is_trader_existing_and_enabled(exchange_manager),
+                "symbols": sorted(trading_api.get_trading_pairs(exchange_manager)),
+            })
+        return flask.jsonify(result)
+
+
     @blueprint.route("/are_compatible_accounts", methods=['POST'])
     @login.login_required_when_activated
     def are_compatible_accounts():

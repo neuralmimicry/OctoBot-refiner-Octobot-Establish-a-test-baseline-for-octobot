@@ -39,6 +39,8 @@ class BrowsingDataProvider(singleton.Singleton):
     SESSION_SEC_KEY = "session_sec_key"
     FIRST_DISPLAY = "first_display"
     CURRENCY_LOGO = "currency_logo"
+    CURRENCY_LOGO_FAILURE = "currency_logo_failure"
+    CURRENCY_LOGO_FAILURE_RETRY_DELAY = 15 * 60
     ALL_CURRENCIES = "all_currencies"
     HOME = "home"
     PROFILE = "profile"
@@ -97,10 +99,30 @@ class BrowsingDataProvider(singleton.Singleton):
         except KeyError:
             return None
 
+    def should_fetch_currency_logo_url(self, currency_id):
+        if self.get_currency_logo_url(currency_id) is not None:
+            return False
+        retry_ts = self.browsing_data[self.CURRENCY_LOGO_FAILURE].get(currency_id)
+        if retry_ts is None:
+            return True
+        if retry_ts <= time.time():
+            self.browsing_data[self.CURRENCY_LOGO_FAILURE].pop(currency_id, None)
+            return True
+        return False
+
+    def mark_currency_logo_fetch_failure(
+        self, currency_id, retry_delay=None, dump=True
+    ):
+        delay = retry_delay if retry_delay is not None else self.CURRENCY_LOGO_FAILURE_RETRY_DELAY
+        self.browsing_data[self.CURRENCY_LOGO_FAILURE][currency_id] = time.time() + max(delay, 0)
+        if dump:
+            self.dump_saved_data()
+
     def set_currency_logo_url(self, currency_id, url, dump=True):
         if url is None:
             # do not save None as an url
             return
+        self.browsing_data[self.CURRENCY_LOGO_FAILURE].pop(currency_id, None)
         self.browsing_data[self.CURRENCY_LOGO][currency_id] = url
         if dump:
             self.dump_saved_data()
@@ -137,6 +159,7 @@ class BrowsingDataProvider(singleton.Singleton):
             self.SESSION_SEC_KEY: self._create_session_secret_key(),
             self.FIRST_DISPLAY: {},
             self.CURRENCY_LOGO: {},
+            self.CURRENCY_LOGO_FAILURE: {},
             self.ALL_CURRENCIES: self._create_expiring_cached_value([]),
         }
 

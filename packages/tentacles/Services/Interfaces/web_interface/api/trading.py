@@ -14,14 +14,104 @@
 #  You should have received a copy of the GNU Lesser General Public
 #  License along with this library.
 import flask
+import decimal
+import datetime
 
 import octobot_services.interfaces.util as interfaces_util
+import tentacles.Services.Interfaces.web_interface as web_interface
 import tentacles.Services.Interfaces.web_interface.util as util
 import tentacles.Services.Interfaces.web_interface.login as login
 import tentacles.Services.Interfaces.web_interface.models as models
+import octobot_trading.api as trading_api
+
+
+def _json_safe(value):
+    """Convert OctoBot runtime values into stable JSON primitives."""
+    if isinstance(value, decimal.Decimal):
+        return float(value) if value.is_finite() else None
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "value") and not isinstance(value, (str, bytes)):
+        return _json_safe(value.value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _get_exchange_manager(exchange_name):
+    if exchange_name:
+        return models.get_first_exchange_data(exchange_name)[0]
+    return models.get_first_exchange_data()[0]
+
+
+def _get_market_ticker(exchange_name, symbol):
+    if not symbol or not str(symbol).strip():
+        raise ValueError("symbol is required")
+    normalized_symbol = str(symbol).strip().replace("|", "/").upper()
+    exchange_manager = _get_exchange_manager(exchange_name)
+    exchange_name = trading_api.get_exchange_name(exchange_manager)
+    exchange_id = trading_api.get_exchange_manager_id(exchange_manager)
+    symbol_data = trading_api.get_symbol_data(
+        exchange_manager, normalized_symbol, allow_creation=False
+    )
+    mark_price = interfaces_util.run_in_bot_main_loop(
+        symbol_data.prices_manager.get_mark_price(timeout=30), timeout=35
+    )
+    mark_price = decimal.Decimal(str(mark_price))
+    if not mark_price.is_finite() or mark_price <= decimal.Decimal("0"):
+        raise RuntimeError(f"No valid mark price for {exchange_name} {normalized_symbol}")
+    timestamp = exchange_manager.exchange.get_exchange_current_time()
+    return {
+        "exchange": exchange_name,
+        "exchange_id": exchange_id,
+        "symbol": normalized_symbol,
+        "last": mark_price,
+        "close": mark_price,
+        "price": mark_price,
+        "mark_price": mark_price,
+        "timestamp": timestamp,
+    }
 
 
 def register(blueprint):
+    @blueprint.route("/market/ticker", methods=['GET'])
+    @login.login_required_when_activated
+    def market_ticker():
+        try:
+            return flask.jsonify(_json_safe(_get_market_ticker(
+                flask.request.args.get("exchange"),
+                flask.request.args.get("symbol"),
+            )))
+        except (KeyError, ValueError) as err:
+            return util.get_rest_reply(str(err), 404)
+        except Exception as err:
+            return util.get_rest_reply(str(err), 503)
+
+
+    @blueprint.route("/portfolio", methods=['GET'])
+    @login.login_required_when_activated
+    def portfolio():
+        return flask.jsonify(_json_safe(models.get_exchange_holdings_per_symbol()))
+
+
+    @blueprint.route("/logs", methods=['GET'])
+    @login.login_required_when_activated
+    def logs():
+        limit = flask.request.args.get("limit", default=25, type=int)
+        limit = max(1, min(limit, 500))
+        entries = list(web_interface.get_logs())[-limit:]
+        notifications = list(web_interface.get_notifications_history())[-limit:]
+        return flask.jsonify({
+            "logs": _json_safe(entries),
+            "notifications": _json_safe(notifications),
+            "count": len(entries),
+        })
+
+
     @blueprint.route("/orders", methods=['GET', 'POST'])
     @login.login_required_when_activated
     def orders():
@@ -29,8 +119,17 @@ def register(blueprint):
             return flask.jsonify(models.get_all_orders_data())
         elif flask.request.method == "POST":
             result = ""
-            request_data = flask.request.get_json()
+            request_data = flask.request.get_json(silent=True)
             action = flask.request.args.get("action")
+            if action is None and isinstance(request_data, dict):
+                action = request_data.get("action")
+            if action is None:
+                if isinstance(request_data, list):
+                    action = "create_orders"
+                elif isinstance(request_data, dict) and any(
+                    key in request_data for key in ("symbol", "pair", "market", "side", "order_side")
+                ):
+                    action = "create_order"
             if action == "cancel_order":
                 if interfaces_util.cancel_orders([request_data]):
                     result = "Order cancelled"
@@ -39,6 +138,22 @@ def register(blueprint):
             elif action == "cancel_orders":
                 removed_count = interfaces_util.cancel_orders(request_data)
                 result = f"{removed_count} orders cancelled"
+            elif action == "create_order":
+                try:
+                    result = models.create_order(request_data)
+                except ValueError as err:
+                    return util.get_rest_reply(str(err), 400)
+                except RuntimeError as err:
+                    return util.get_rest_reply(str(err), 500)
+            elif action == "create_orders":
+                try:
+                    result = models.create_orders(request_data)
+                except ValueError as err:
+                    return util.get_rest_reply(str(err), 400)
+                except RuntimeError as err:
+                    return util.get_rest_reply(str(err), 500)
+            else:
+                return util.get_rest_reply(f"Unsupported order action: {action}", 400)
             return flask.jsonify(result)
 
 
