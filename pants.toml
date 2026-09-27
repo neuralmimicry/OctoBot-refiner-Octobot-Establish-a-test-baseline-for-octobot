@@ -43,8 +43,10 @@ interpreter_constraints = ["==3.13.*"]
 enable_resolves = false
 
 [python-infer]
-# Enable dependency inference
-imports = true
+# The OctoBot distribution declares its complete source and requirement graph
+# explicitly in BUILD. Shared requirements such as pydantic and numpy otherwise
+# have multiple owners, so keep package dependencies deterministic.
+imports = false
 conftests = true
 
 [docker]
@@ -54,4 +56,3 @@ build_verbose = true
 env_vars.add = [
   "DOCKER_BUILDKIT=1",
 ]
-
