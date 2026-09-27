@@ -43,10 +43,11 @@ interpreter_constraints = ["==3.13.*"]
 enable_resolves = false
 
 [python-infer]
-# The OctoBot distribution declares its complete source and requirement graph
-# explicitly in BUILD. Shared requirements such as pydantic and numpy otherwise
-# have multiple owners, so keep package dependencies deterministic.
-imports = false
+# Shared requirements such as pydantic and numpy have multiple target owners.
+# Choose the owner nearest each source root so Pants retains import inference
+# without making package builds depend on ambiguous requirement targets.
+imports = true
+ambiguity_resolution = "by_source_root"
 conftests = true
 
 [docker]
