@@ -8,10 +8,15 @@ Tag: build
 Replaces: swarmhpc roles/continuum_tenant_octobot/tasks/main.yml + files/ensure_task_output_compat.mjs
 
 Ansible task: Ensure OctoBot node web build aliases generated Task_Output to Task; Persist OctoBot node web generated Task compatibility hook
+
+The script also exits 0 when the generator already emits `export type Task`
+(single-schema OpenAPI output without the runtime Python overlay, as in CI);
+the role's copy threw there and failed the tentacle export. Production output
+(Task_Output present) is unchanged.
 ---
- .../Interfaces/node_web_interface/package.json    |  1 +
- .../scripts/ensure_task_output_compat.mjs         | 15 +++++++++++++++
- 2 files changed, 16 insertions(+)
+ .../Interfaces/node_web_interface/package.json  |  1 +
+ .../scripts/ensure_task_output_compat.mjs       | 17 +++++++++++++++++
+ 2 files changed, 18 insertions(+)
  create mode 100644 packages/tentacles/Services/Interfaces/node_web_interface/scripts/ensure_task_output_compat.mjs
 
 diff --git a/packages/tentacles/Services/Interfaces/node_web_interface/package.json b/packages/tentacles/Services/Interfaces/node_web_interface/package.json
@@ -28,17 +33,19 @@ index bc1cf1959159aa1282c9074dffae75cdad547030..5254f9145fb21b52f5e260bd6aabfbe0
      "lint": "biome check --write --unsafe --no-errors-on-unmatched --files-ignore-unknown=true ./",
 diff --git a/packages/tentacles/Services/Interfaces/node_web_interface/scripts/ensure_task_output_compat.mjs b/packages/tentacles/Services/Interfaces/node_web_interface/scripts/ensure_task_output_compat.mjs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2d14a463bb46a37f16dc9190352060231b028588
+index 0000000000000000000000000000000000000000..cd1c6fee6f0487d24de1487dc9a8cf3894be5efb
 --- /dev/null
 +++ b/packages/tentacles/Services/Interfaces/node_web_interface/scripts/ensure_task_output_compat.mjs
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,17 @@
 +import { readFileSync, writeFileSync } from "node:fs";
 +
 +const typesPath = "src/client/types.gen.ts";
 +const alias = "export type Task = Task_Output;";
 +const types = readFileSync(typesPath, "utf8");
 +
-+if (types.includes(alias)) {
++// Nothing to do when the alias exists or the generator already emits Task
++// (single-schema OpenAPI output, e.g. without the runtime Python overlay).
++if (types.includes(alias) || /^export type Task\s*=/m.test(types)) {
 +  process.exit(0);
 +}
 +
