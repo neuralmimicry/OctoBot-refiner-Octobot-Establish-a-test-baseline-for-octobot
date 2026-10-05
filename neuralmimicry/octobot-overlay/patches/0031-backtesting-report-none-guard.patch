@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:29 +0100
+Subject: [PATCH 31/33] backtesting-report-none-guard
+
+Tag: site
+
+Replaces: swarmhpc continuum_tenant_octobot_site.yml post_tasks
+
+Ansible task: Patch OctoBot backtesting report NoneType portfolio guard in active tentacles volume
+---
+ .../web_interface/models/backtesting.py         | 17 ++++++++++++++---
+ 1 file changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/models/backtesting.py b/packages/tentacles/Services/Interfaces/web_interface/models/backtesting.py
+index 1532e913e4e18015aca2b5ebffaa2d94332e6677..6aee124cb23cca3f78776bec2299c7ec823247a1 100644
+--- a/packages/tentacles/Services/Interfaces/web_interface/models/backtesting.py
++++ b/packages/tentacles/Services/Interfaces/web_interface/models/backtesting.py
+@@ -316,10 +316,21 @@ def get_backtesting_report(source):
+     if tools[constants.BOT_TOOLS_BACKTESTING]:
+         independent_backtesting = tools[constants.BOT_TOOLS_BACKTESTING]
+         if tools[constants.BOT_TOOLS_BACKTESTING_SOURCE] == source:
+-            return {
+-                "report": interfaces_util.run_in_bot_async_executor(
++            try:
++                report = interfaces_util.run_in_bot_async_executor(
+                     octobot_api.get_independent_backtesting_report(independent_backtesting)
+-                ),
++                )
++            except Exception as err:
++                err_text = str(err)
++                if "NoneType" in err_text and "portfolio" in err_text:
++                    bot_logging.get_logger("BacktestingModel").warning(
++                        "Backtesting report pending: origin portfolio is not ready yet (%s)",
++                        err_text,
++                    )
++                    return {}
++                raise
++            return {
++                "report": report,
+                 "trades": trading_model.get_all_trades_data(independent_backtesting=independent_backtesting)
+             }
+     return {}

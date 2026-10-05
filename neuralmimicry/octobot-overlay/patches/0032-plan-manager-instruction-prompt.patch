@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:29 +0100
+Subject: [PATCH 32/33] plan-manager-instruction-prompt
+
+Tag: runtime-init
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/templates/octobot-stack.yaml.j2 (init container apply_ai_team_tentacles_patch)
+
+Ansible task: ai_plan_manager producer prompt patch (takes effect on the init run after the site-patch restart)
+---
+ .../Agent/teams/default_manager_agent/ai_plan_manager_agent.py   | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/packages/tentacles/Agent/teams/default_manager_agent/ai_plan_manager_agent.py b/packages/tentacles/Agent/teams/default_manager_agent/ai_plan_manager_agent.py
+index 5cf1bed162cf9035cce323e459a387c8ecb39944..e143590ce75d850744b52b8084e0bb566a8c9977 100644
+--- a/packages/tentacles/Agent/teams/default_manager_agent/ai_plan_manager_agent.py
++++ b/packages/tentacles/Agent/teams/default_manager_agent/ai_plan_manager_agent.py
+@@ -331,6 +331,7 @@ Instructions: {self.format_data(instructions) if instructions else "None"}
+ 
+ CRITICAL: Every agent step MUST include agent_name (non-empty string). 
+ CRITICAL: steps must not be empty.
++CRITICAL: instruction values must be scalar strings or structured objects; never emit an array directly as an instruction value.
+ Create an execution plan. Use agent steps (step_type "agent" or omit) for single-agent steps and debate steps (step_type "debate" with debate_config) when you want debators to argue and a judge to decide; you can include multiple debate steps if needed."""
+                 },
+             ]

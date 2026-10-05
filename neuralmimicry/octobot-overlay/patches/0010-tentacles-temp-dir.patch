@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:27 +0100
+Subject: [PATCH 10/33] tentacles-temp-dir
+
+Tag: ai-team
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/tasks/main.yml
+
+Ansible task: Patch OctoBot tentacles temp-directory handling in source tree
+---
+ .../octobot_tentacles_manager/constants.py           |  4 ++--
+ .../util/tentacle_fetching.py                        | 12 ++++++++++--
+ 2 files changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/packages/tentacles_manager/octobot_tentacles_manager/constants.py b/packages/tentacles_manager/octobot_tentacles_manager/constants.py
+index 7d68b9403fac217c81ab3fb6a1fdca7297c4eb50..858ed994cac9bb1bca671fcb5baef5b4dbb987ff 100644
+--- a/packages/tentacles_manager/octobot_tentacles_manager/constants.py
++++ b/packages/tentacles_manager/octobot_tentacles_manager/constants.py
+@@ -90,8 +90,8 @@ ARTIFACT_VERSION_SEPARATOR = "@"
+ ARTIFACT_VERSION_DOT_REPLACEMENT = "~"
+ 
+ # Tentacles installation folders
+-TENTACLES_INSTALL_TEMP_DIR = "temp_tentacles"
+-TENTACLES_REQUIREMENTS_INSTALL_TEMP_DIR = "requirements_temp_tentacles"
++TENTACLES_INSTALL_TEMP_DIR = os.getenv("OCTOBOT_TENTACLES_INSTALL_TEMP_DIR", "/tmp/temp_tentacles")
++TENTACLES_REQUIREMENTS_INSTALL_TEMP_DIR = os.getenv("OCTOBOT_TENTACLES_REQUIREMENTS_INSTALL_TEMP_DIR", "/tmp/requirements_temp_tentacles")
+ TENTACLES_ARCHIVE_ROOT = "reference_tentacles"
+ TO_REMOVE_FOLDER = "_to_rm"
+ 
+diff --git a/packages/tentacles_manager/octobot_tentacles_manager/util/tentacle_fetching.py b/packages/tentacles_manager/octobot_tentacles_manager/util/tentacle_fetching.py
+index 3ae09f805878f4f30ce811e9cc6dae380e05dc9b..1b6f835440241ec040a28824caa3bc6c615da39d 100644
+--- a/packages/tentacles_manager/octobot_tentacles_manager/util/tentacle_fetching.py
++++ b/packages/tentacles_manager/octobot_tentacles_manager/util/tentacle_fetching.py
+@@ -32,6 +32,10 @@ DOWNLOADED_DATA_CHUNK_SIZE = 60000
+ async def fetch_and_extract_tentacles(
+     tentacles_temp_dir, tentacles_path_or_url, aiohttp_session, merge_dirs=False, hide_url=False
+ ):
++    resolved_temp_dir = tentacles_temp_dir
++    if not path.isabs(resolved_temp_dir):
++        resolved_temp_dir = path.join(os.getenv("OCTOBOT_TENTACLES_TEMP_ROOT", "/tmp"), resolved_temp_dir)
++
+     compressed_file = tentacles_path_or_url
+     should_download = _is_url(tentacles_path_or_url)
+     try:
+@@ -39,7 +43,11 @@ async def fetch_and_extract_tentacles(
+         if should_download:
+             if aiohttp_session is None:
+                 raise RuntimeError("Missing aiohttp_session argument")
+-            compressed_file = f"downloaded_{tentacles_temp_dir}"
++            os.makedirs(path.dirname(resolved_temp_dir), exist_ok=True)
++            compressed_file = path.join(
++                path.dirname(resolved_temp_dir),
++                f"downloaded_{path.basename(resolved_temp_dir)}",
++            )
+             last_modified = await _download_tentacles(compressed_file, tentacles_path_or_url, aiohttp_session)
+             await util.log_tentacles_file_details(compressed_file, last_modified)
+         # Verify signature for both local and remote files.
+@@ -48,7 +56,7 @@ async def fetch_and_extract_tentacles(
+             compressed_file, tentacles_path_or_url, aiohttp_session
+         )
+         # Use in-memory verified bytes when available to avoid TOCTOU
+-        await _extract_tentacles(compressed_file, tentacles_temp_dir, merge_dirs, verified_data=verified_data)
++        await _extract_tentacles(compressed_file, resolved_temp_dir, merge_dirs, verified_data=verified_data)
+     except Exception as err:
+         commons_logging.get_logger("TentaclesFetching").warning(
+             f"Error when fetching tentacles from {'***' if hide_url else tentacles_path_or_url}: "

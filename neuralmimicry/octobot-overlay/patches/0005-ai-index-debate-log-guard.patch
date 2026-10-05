@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:26 +0100
+Subject: [PATCH 05/33] ai-index-debate-log-guard
+
+Tag: ai-team
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/tasks/main.yml
+
+Ansible task: Patch OctoBot AI index debate logging guard in source tree
+---
+ .../Trading/Mode/ai_trading_mode/ai_index_trading.py  | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/packages/tentacles/Trading/Mode/ai_trading_mode/ai_index_trading.py b/packages/tentacles/Trading/Mode/ai_trading_mode/ai_index_trading.py
+index 6ce35e1b0ba27d8006719eb06cd3ea44284c2b20..3e0787c5a55d953f74673d5d0a27e6feda744254 100644
+--- a/packages/tentacles/Trading/Mode/ai_trading_mode/ai_index_trading.py
++++ b/packages/tentacles/Trading/Mode/ai_trading_mode/ai_index_trading.py
+@@ -380,7 +380,16 @@ class AIIndexTradingModeProducer(index_trading.IndexTradingModeProducer):
+         except AttributeError:
+             debate_state = None
+         if debate_state:
+-            if self.trading_mode.log_ai_decisions:
++            log_ai_decisions = bool(getattr(self.trading_mode, "log_ai_decisions", False))
++            if not log_ai_decisions:
++                trading_mode_config = getattr(self.trading_mode, "trading_config", None)
++                if isinstance(trading_mode_config, dict):
++                    log_ai_decisions = bool(trading_mode_config.get("log_ai_decisions", False))
++            if not log_ai_decisions:
++                base_config = getattr(self.trading_mode, "config", None)
++                if isinstance(base_config, dict):
++                    log_ai_decisions = bool(base_config.get("log_ai_decisions", False))
++            if log_ai_decisions:
+                 self.logger.info(
+                     "Debate state: %s",
+                     str(debate_state),

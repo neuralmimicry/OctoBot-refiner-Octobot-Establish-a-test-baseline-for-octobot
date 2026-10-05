@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:26 +0100
+Subject: [PATCH 09/33] profile-copy-import-guard
+
+Tag: ai-team
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/tasks/main.yml
+
+Ansible task: Patch OctoBot profile-copy exchange feed import guard in source tree
+---
+ .../Mode/profile_copy_trading_mode/profile_copy_trading.py       | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/packages/tentacles/Trading/Mode/profile_copy_trading_mode/profile_copy_trading.py b/packages/tentacles/Trading/Mode/profile_copy_trading_mode/profile_copy_trading.py
+index 6335f9e5408eeb99116d7a645c5be54765d3d289..1ca813f9cfa5f02e2678373546d076e6e8cae138 100644
+--- a/packages/tentacles/Trading/Mode/profile_copy_trading_mode/profile_copy_trading.py
++++ b/packages/tentacles/Trading/Mode/profile_copy_trading_mode/profile_copy_trading.py
+@@ -33,6 +33,7 @@ import async_channel.channels as channels
+ try:
+     import tentacles.Services.Services_feeds.exchange_service_feed as exchange_service_feed
+ except ImportError:
++    exchange_service_feed = None
+     if commons_constants.USE_MINIMAL_LIBS:
+         # mock exchange_service_feed imports
+         class ExchangeServiceFeedImportMock:

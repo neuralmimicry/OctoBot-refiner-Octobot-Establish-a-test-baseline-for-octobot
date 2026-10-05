@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:27 +0100
+Subject: [PATCH 11/33] node-web-task-output-compat
+
+Tag: build
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/tasks/main.yml + files/ensure_task_output_compat.mjs
+
+Ansible task: Ensure OctoBot node web build aliases generated Task_Output to Task; Persist OctoBot node web generated Task compatibility hook
+---
+ .../Interfaces/node_web_interface/package.json    |  1 +
+ .../scripts/ensure_task_output_compat.mjs         | 15 +++++++++++++++
+ 2 files changed, 16 insertions(+)
+ create mode 100644 packages/tentacles/Services/Interfaces/node_web_interface/scripts/ensure_task_output_compat.mjs
+
+diff --git a/packages/tentacles/Services/Interfaces/node_web_interface/package.json b/packages/tentacles/Services/Interfaces/node_web_interface/package.json
+index bc1cf1959159aa1282c9074dffae75cdad547030..5254f9145fb21b52f5e260bd6aabfbe0172defe4 100644
+--- a/packages/tentacles/Services/Interfaces/node_web_interface/package.json
++++ b/packages/tentacles/Services/Interfaces/node_web_interface/package.json
+@@ -4,6 +4,7 @@
+   "version": "0.0.0",
+   "type": "module",
+   "scripts": {
++    "prebuild": "node scripts/ensure_task_output_compat.mjs",
+     "dev": "vite",
+     "build": "tsc -p tsconfig.build.json && vite build",
+     "lint": "biome check --write --unsafe --no-errors-on-unmatched --files-ignore-unknown=true ./",
+diff --git a/packages/tentacles/Services/Interfaces/node_web_interface/scripts/ensure_task_output_compat.mjs b/packages/tentacles/Services/Interfaces/node_web_interface/scripts/ensure_task_output_compat.mjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..2d14a463bb46a37f16dc9190352060231b028588
+--- /dev/null
++++ b/packages/tentacles/Services/Interfaces/node_web_interface/scripts/ensure_task_output_compat.mjs
+@@ -0,0 +1,15 @@
++import { readFileSync, writeFileSync } from "node:fs";
++
++const typesPath = "src/client/types.gen.ts";
++const alias = "export type Task = Task_Output;";
++const types = readFileSync(typesPath, "utf8");
++
++if (types.includes(alias)) {
++  process.exit(0);
++}
++
++if (!/^export type Task_Output\s*=/m.test(types)) {
++  throw new Error(`Generated Task_Output type was not found in ${typesPath}`);
++}
++
++writeFileSync(typesPath, `${types.trimEnd()}\n\n${alias}\n`, "utf8");

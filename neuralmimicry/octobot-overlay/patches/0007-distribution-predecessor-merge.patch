@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:26 +0100
+Subject: [PATCH 07/33] distribution-predecessor-merge
+
+Tag: ai-team
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/tasks/main.yml
+
+Ansible task: Patch OctoBot distribution predecessor-state merge in source tree
+---
+ .../distribution_agent/distribution_agent.py  | 29 +++++++++++++++++--
+ 1 file changed, 27 insertions(+), 2 deletions(-)
+
+diff --git a/packages/tentacles/Agent/sub_agents/distribution_agent/distribution_agent.py b/packages/tentacles/Agent/sub_agents/distribution_agent/distribution_agent.py
+index 9f476994be1415fa99adf20622fd17853a363ad0..7a72a7a92b3bcf15187b144a94048b53f07dfced 100644
+--- a/packages/tentacles/Agent/sub_agents/distribution_agent/distribution_agent.py
++++ b/packages/tentacles/Agent/sub_agents/distribution_agent/distribution_agent.py
+@@ -233,11 +233,36 @@ Remember:
+         Returns:
+             Merged state dict with signal_synthesis and risk_output at top level.
+         """
+-        
++
+         try:
+-            return dict(input_data)
++            state = dict(input_data)
+         except Exception:
+             return {}
++
++        if state.get("signal_synthesis") is not None or state.get("risk_output") is not None:
++            return state
++
++        def _extract_candidate(payload: typing.Any) -> typing.Optional[typing.Dict[str, typing.Any]]:
++            if not isinstance(payload, dict):
++                return None
++            if isinstance(payload.get(agent_constants.RESULT_KEY), dict):
++                return payload.get(agent_constants.RESULT_KEY)
++            if isinstance(payload.get("result"), dict):
++                return payload.get("result")
++            return payload
++
++        for payload in list(state.values()):
++            candidate = _extract_candidate(payload)
++            if not isinstance(candidate, dict):
++                continue
++            if state.get("signal_outputs") is None and candidate.get("signal_outputs") is not None:
++                state["signal_outputs"] = candidate.get("signal_outputs")
++            if state.get("signal_synthesis") is None and candidate.get("signal_synthesis") is not None:
++                state["signal_synthesis"] = candidate.get("signal_synthesis")
++            if state.get("risk_output") is None and candidate.get("risk_output") is not None:
++                state["risk_output"] = candidate.get("risk_output")
++
++        return state
+     
+     async def execute(self, input_data: typing.Any, ai_service) -> typing.Any:
+         # Merge predecessor outputs into state

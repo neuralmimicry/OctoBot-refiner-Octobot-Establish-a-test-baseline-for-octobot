@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:26 +0100
+Subject: [PATCH 04/33] agents-tools-manager-debate-config
+
+Tag: ai-team
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/tasks/main.yml
+
+Ansible task: Patch OctoBot tools-manager debate config shape in source tree
+---
+ .../team/manager/channels/manager_agent.py            | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/packages/agents/octobot_agents/team/manager/channels/manager_agent.py b/packages/agents/octobot_agents/team/manager/channels/manager_agent.py
+index 36a19c9c33b4da989e35337e02695cce31244899..d67ba333f6e2b38d48f0a783e3ce5ba84838c38c 100644
+--- a/packages/agents/octobot_agents/team/manager/channels/manager_agent.py
++++ b/packages/agents/octobot_agents/team/manager/channels/manager_agent.py
+@@ -415,12 +415,13 @@ Examples (tool calls only, no prose):
+         debate_args = models.RunDebateArgs.model_validate(args)
+         
+         # Use team's debate method
++        debate_config = models.DebatePhaseConfig(
++            debator_agent_names=list(debate_args.debator_agent_names),
++            judge_agent_name=debate_args.judge_agent_name,
++            max_rounds=debate_args.max_rounds,
++        )
+         debate_results, completed = await team_producer._run_debate(  # pylint: disable=protected-access
+-            debate_config={
+-                "debator_agent_names": debate_args.debator_agent_names,
+-                "judge_agent_name": debate_args.judge_agent_name,
+-                "max_rounds": debate_args.max_rounds,
+-            },
++            debate_config=debate_config,
+             initial_data=state.initial_data,
+             results=state.results,
+             completed_agents=set(state.completed_agents),

@@ -1,0 +1,143 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:26 +0100
+Subject: [PATCH 06/33] ai-index-strategy-wait-fallback
+
+Tag: ai-team
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/tasks/main.yml
+
+Ansible task: Patch OctoBot AI index strategy wait-state fallback in source tree
+---
+ .../Mode/ai_trading_mode/ai_index_trading.py  | 93 ++++++++++++++++---
+ 1 file changed, 79 insertions(+), 14 deletions(-)
+
+diff --git a/packages/tentacles/Trading/Mode/ai_trading_mode/ai_index_trading.py b/packages/tentacles/Trading/Mode/ai_trading_mode/ai_index_trading.py
+index 3e0787c5a55d953f74673d5d0a27e6feda744254..a9e86a4e1f424fb82bf0d4a9c390e4b2683b56e0 100644
+--- a/packages/tentacles/Trading/Mode/ai_trading_mode/ai_index_trading.py
++++ b/packages/tentacles/Trading/Mode/ai_trading_mode/ai_index_trading.py
+@@ -49,6 +49,7 @@ class AIIndexTradingModeProducer(index_trading.IndexTradingModeProducer):
+         self._global_strategy_data = {}
+         self._crypto_strategy_data = {}  # {cryptocurrency: strategy_data}
+         self.time_frame_filter = commons_constants.CONFIG_WILDCARD
++        self._crypto_strategy_wait_started_at = None
+ 
+     def get_channels_registration(self):
+         """
+@@ -301,38 +302,102 @@ class AIIndexTradingModeProducer(index_trading.IndexTradingModeProducer):
+         cryptocurrency: typing.Optional[str],
+         symbol: typing.Optional[str],
+         time_frame,
+-    ):       
+-        # TODO Check if all cryptocurrencies have been analyzed
+-
+-        # Only run the full agent team when we have data for all tracked coins
++    ):
++        # Only run the full agent team when we have data for tracked coins.
+         if not self.trading_mode.indexed_coins:
+             self.logger.debug("No indexed coins configured, skipping agent analysis.")
++            self._crypto_strategy_wait_started_at = None
+             return
+-        
+-        # Check if we have crypto strategy data for all indexed coins (exclude reference market)
++
+         reference_market = self.exchange_manager.exchange_personal_data.portfolio_manager.reference_market
+         indexed_coins = [coin for coin in self.trading_mode.indexed_coins if coin != reference_market]
+ 
++        if not indexed_coins:
++            self.logger.debug("No non-reference indexed coins configured, skipping agent analysis.")
++            self._crypto_strategy_wait_started_at = None
++            return
++
+         if not self._has_filtered_global_strategy_data():
+             self.logger.debug("Waiting for filtered global strategy data.")
+             return
+ 
+-        if not self._has_filtered_crypto_strategy_data(indexed_coins):
++        strategy_type = evaluators_enums.EvaluatorMatrixTypes.STRATEGIES.value
++        covered_coins = []
++        for coin in indexed_coins:
++            strategy_data = self._crypto_strategy_data.get(coin, {})
++            entries = strategy_data.get(strategy_type, [])
++            has_entries = False
++            for entry in entries:
++                if entry.get(MatrixChannel.CRYPTOCURRENCY_KEY) is not None:
++                    has_entries = True
++                    break
++            if has_entries:
++                covered_coins.append(coin)
++
++        missing_coins = [coin for coin in indexed_coins if coin not in covered_coins]
++        if not missing_coins:
++            self._crypto_strategy_wait_started_at = None
++            self.logger.debug("All strategy data collected. Running AI agents...")
++            try:
++                await self._run_agents()
++            except Exception as e:
++                self.logger.exception(f"Error running AI agents: {e}")
++            return
++
++        now = datetime.utcnow().timestamp()
++        if self._crypto_strategy_wait_started_at is None:
++            self._crypto_strategy_wait_started_at = now
++
++        elapsed_seconds = max(0.0, now - float(self._crypto_strategy_wait_started_at))
++        coverage_ratio = len(covered_coins) / len(indexed_coins)
++
++        wait_timeout_seconds = 600.0
++        min_coverage_ratio = 0.60
++        trading_mode_config = getattr(self.trading_mode, "config", None)
++        if isinstance(trading_mode_config, dict):
++            try:
++                wait_timeout_seconds = float(
++                    trading_mode_config.get("strategy_data_wait_timeout_seconds", wait_timeout_seconds)
++                )
++            except (TypeError, ValueError):
++                pass
++            try:
++                min_coverage_ratio = float(
++                    trading_mode_config.get("strategy_data_min_coverage_ratio", min_coverage_ratio)
++                )
++            except (TypeError, ValueError):
++                pass
++
++        wait_timeout_seconds = max(0.0, wait_timeout_seconds)
++        min_coverage_ratio = min(1.0, max(0.0, min_coverage_ratio))
++
++        if elapsed_seconds < wait_timeout_seconds or coverage_ratio < min_coverage_ratio:
+             self.logger.debug(
+-                "Waiting for filtered crypto strategy data. Have: %s Need: %s",
+-                list(self._crypto_strategy_data.keys()),
++                "Waiting for filtered crypto strategy data. Have: %s Need: %s Missing: %s Coverage: %.2f Waited: %.1fs/%.1fs",
++                covered_coins,
+                 indexed_coins,
++                missing_coins,
++                coverage_ratio,
++                elapsed_seconds,
++                wait_timeout_seconds,
+             )
+             return
+-        
+-        # TODO check if all coins are ready        
+-        self.logger.debug("All strategy data collected. Running AI agents...")
+-        
++
++        self.logger.warning(
++            "Proceeding with partial crypto strategy data after %.1fs wait. Have: %s Need: %s Missing: %s Coverage: %.2f",
++            elapsed_seconds,
++            covered_coins,
++            indexed_coins,
++            missing_coins,
++            coverage_ratio,
++        )
++        self._crypto_strategy_wait_started_at = None
++
+         try:
+             await self._run_agents()
+         except Exception as e:
+             self.logger.exception(f"Error running AI agents: {e}")
+-    
++
+     async def _run_agents(self):
+         """
+         Run AI agents using TradingAgentTeam to analyze portfolio and generate distribution decisions.
