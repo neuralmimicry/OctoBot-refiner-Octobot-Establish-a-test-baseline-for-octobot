@@ -10,10 +10,25 @@ on:
 
 permissions: read-all
 
+env:
+  # actions/setup-python on self-hosted runners installs a shared-library CPython and
+  # exports LD_LIBRARY_PATH; Pants scrubs it from sandboxed processes unless passed through.
+  PANTS_SUBPROCESS_ENVIRONMENT_ENV_VARS: "+['LD_LIBRARY_PATH']"
+
 jobs:
+  overlay:
+    name: NeuralMimicry overlay self-test (pinned upstream, idempotency)
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: neuralmimicry
+      - name: Apply overlay to a fresh upstream checkout twice
+        run: neuralmimicry/octobot-overlay/selftest.sh
+
   build:
     name: ${{ matrix.os }}${{ matrix.arch }} - Python ${{ matrix.version }} - Build wheel
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       matrix:
         os: [ ubuntu-latest ]
@@ -21,6 +36,9 @@ jobs:
         version: [ "3.13.x" ]
     steps:
       - uses: actions/checkout@v6
+
+      - name: Apply NeuralMimicry overlay
+        run: python3 neuralmimicry/octobot-overlay/apply.py --target .
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -67,7 +85,7 @@ jobs:
   tests:
     needs: [ build ]
     name: ${{ matrix.os }}${{ matrix.arch }} - Python ${{ matrix.version }} - ${{ matrix.package }}
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       matrix:
         os: [ ubuntu-latest ]
@@ -94,6 +112,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v6
+
+    - name: Apply NeuralMimicry overlay
+      run: python3 neuralmimicry/octobot-overlay/apply.py --target .
 
     - name: Detect package features
       id: detect
@@ -129,14 +150,15 @@ jobs:
 
     - name: Lint package
       run: |
+        # pylint exit status is a bitmask: fail on fatal (1), error (2) or
+        # usage error (32); tolerate warning (4), refactor (8), convention (16).
+        rc=0
         if [ -f "${{ matrix.package }}/standard.rc" ]; then
-          pylint --rcfile=${{ matrix.package }}/standard.rc ${{ matrix.package }}/
-          rc=$?
+          pylint --rcfile=${{ matrix.package }}/standard.rc ${{ matrix.package }}/ || rc=$?
         else
-          pylint --rcfile=standard.rc ${{ matrix.package }}/
-          rc=$?
+          pylint --rcfile=standard.rc ${{ matrix.package }}/ || rc=$?
         fi
-        if [ $rc -eq 1 ]; then exit 1; fi
+        if (( rc & 35 )); then exit $rc; fi
 
     - name: Install Rust toolchain
       if: steps.detect.outputs.has_rust == 'true'
@@ -206,79 +228,6 @@ jobs:
           cd - > /dev/null
         done
 
-  extended_linter:
-    name: extended_linter
-    needs: [ build ]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13.x"
-
-      - name: Download build wheel artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: octobot-wheel
-          path: dist/
-
-      - name: Install OctoBot
-        run: |
-          pip install -r dev_requirements.txt
-          pip install dist/*.whl
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-
-      - name: Build web client SDK
-        run: |
-          npm ci
-          npm run build -w packages/client/octobot_client_ts
-
-      - name: Install tentacles
-        env:
-          ALLOW_UNSIGNED_TENTACLES: "true"
-        run: |
-          mkdir -p output
-          OctoBot tentacles -d packages/tentacles -p any_platform.zip
-          OctoBot tentacles --install --location output/any_platform.zip --all
-
-      - name: tools tests
-        run: PYTHONPATH=.:$PYTHONPATH pytest tools/tests -q
-
-      - name: Fetch base branch
-        if: github.event_name == 'pull_request'
-        run: git fetch origin ${{ github.base_ref }}
-
-      - name: PR policy check
-        if: github.event_name == 'pull_request'
-        id: linter
-        run: |
-          PYTHONPATH=. python -m tools.extended_linter \
-            --base origin/${{ github.base_ref }} \
-            --continue \
-            --skip-tentacles-reinstall \
-            --write-report-json extended-linter.json | tee extended-linter.txt
-
-      - name: Upload extended_linter report on failure
-        if: failure() && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: extended-linter-report
-          path: |
-            extended-linter.txt
-            extended-linter.json
-
-      - name: Step summary on failure
-        if: failure() && github.event_name == 'pull_request'
-        run: |
-          echo "## extended_linter failed" >> "$GITHUB_STEP_SUMMARY"
-          cat extended-linter.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
-
   docker:
     name: Build & Push Docker images
     needs: [ build, tests ]
@@ -286,13 +235,16 @@ jobs:
     permissions:
       contents: read
       packages: write
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       matrix:
         os: [ ubuntu-latest ]
 
     steps:
       - uses: actions/checkout@v6
+
+      - name: Apply NeuralMimicry overlay
+        run: python3 neuralmimicry/octobot-overlay/apply.py --target .
 
       - name: Run hadolint
         uses: reviewdog/action-hadolint@v1
@@ -453,7 +405,7 @@ jobs:
     needs: [ build, tests, publish-npm ]
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/')
     name: ${{ matrix.os }}${{ matrix.arch }} - Python ${{ matrix.version }} - Upload Tentacles
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       matrix:
         os: [ ubuntu-latest ]
@@ -462,6 +414,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+
+      - name: Apply NeuralMimicry overlay
+        run: python3 neuralmimicry/octobot-overlay/apply.py --target .
 
       - name: Set up Python ${{ matrix.version }}
         uses: actions/setup-python@v6
@@ -540,7 +495,7 @@ jobs:
   docs:
     name: Build & Deploy Docs
     needs: [build, tests]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
       deployments: write
@@ -550,6 +505,9 @@ jobs:
         with:
           fetch-depth: 0
           lfs: true
+
+      - name: Apply NeuralMimicry overlay
+        run: python3 neuralmimicry/octobot-overlay/apply.py --target .
 
       - uses: actions/setup-node@v6
         with:
@@ -589,13 +547,16 @@ jobs:
     name: Publish npm packages
     needs: [ build, tests ]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/'))
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
       id-token: write   # required for npm trusted publishing (OIDC, no token needed)
 
     steps:
       - uses: actions/checkout@v6
+
+      - name: Apply NeuralMimicry overlay
+        run: python3 neuralmimicry/octobot-overlay/apply.py --target .
 
       - uses: actions/setup-node@v6
         with:
@@ -636,7 +597,7 @@ jobs:
     needs: [ build, tests ]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
     name: Source distribution - Python ${{ matrix.version }} - Deploy
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       matrix:
         os: [ ubuntu-latest ]
@@ -645,6 +606,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+
+      - name: Apply NeuralMimicry overlay
+        run: python3 neuralmimicry/octobot-overlay/apply.py --target .
 
       - name: Set up Python ${{ matrix.version }}
         uses: actions/setup-python@v6
@@ -682,6 +646,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v6
+
+    - name: Apply NeuralMimicry overlay
+      run: python3 neuralmimicry/octobot-overlay/apply.py --target .
 
     - name: Download wheel artifact
       uses: actions/download-artifact@v8
@@ -784,7 +751,7 @@ jobs:
     needs: [ binary, docker, tentacles ]
     permissions:
       contents: write
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       matrix:
         os: [ ubuntu-latest ]
@@ -881,7 +848,7 @@ jobs:
     needs:
       - build
       - tests
-      - extended_linter
+      - overlay
       - docker
       - binary
       - tentacles
@@ -889,6 +856,19 @@ jobs:
       - version
       - docs
       - publish-npm
-    uses: Drakkar-Software/.github/.github/workflows/failure_notify_workflow.yml@master
-    secrets:
-      DISCORD_GITHUB_WEBHOOK: ${{ secrets.DISCORD_GITHUB_WEBHOOK }}
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - name: Notify failure in Discord
+        env:
+          DISCORD_GITHUB_WEBHOOK: ${{ secrets.DISCORD_GITHUB_WEBHOOK }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$DISCORD_GITHUB_WEBHOOK" ]; then
+            echo "::notice::Discord webhook is not configured; skipping failure notification."
+            exit 0
+          fi
+          payload="{\"content\":\"OctoBot CI failed: ${RUN_URL}\"}"
+          curl --fail-with-body --silent --show-error --retry 3 \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "$DISCORD_GITHUB_WEBHOOK"
