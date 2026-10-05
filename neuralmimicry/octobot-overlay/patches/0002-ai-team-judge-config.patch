@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:26 +0100
+Subject: [PATCH 02/33] ai-team-judge-config
+
+Tag: ai-team
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/tasks/main.yml
+
+Ansible task: Patch OctoBot AI trading-team judge configuration in source tree
+---
+ packages/tentacles/Trading/Mode/ai_trading_mode/team.py | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/packages/tentacles/Trading/Mode/ai_trading_mode/team.py b/packages/tentacles/Trading/Mode/ai_trading_mode/team.py
+index 9633df30f40c2ab3ae2598ae6da7289924fd78dc..18aabed87809dbe594d8f7d07438a3e04e777ff9 100644
+--- a/packages/tentacles/Trading/Mode/ai_trading_mode/team.py
++++ b/packages/tentacles/Trading/Mode/ai_trading_mode/team.py
+@@ -174,6 +174,7 @@ class TradingAgentTeam(agent.AbstractSyncAgentsTeamChannelProducer):
+             team_name=self.TEAM_NAME,
+             team_id=team_id,
+             self_improving=True,
++            judge_agent=risk_judge_producer,
+         )
+     
+     async def run_with_state(
+@@ -268,6 +269,10 @@ class TradingAgentTeam(agent.AbstractSyncAgentsTeamChannelProducer):
+         completed_agents: typing.Set[str] = set()
+ 
+         debate_steps = [step for step in execution_plan.steps if step.step_type == agent_enums.StepType.DEBATE.value]
++        if self.judge_agent is None:
++            fallback_judge = self._producer_by_name.get("RiskJudgeAIAgentProducer")
++            if fallback_judge is not None:
++                self.judge_agent = fallback_judge
+         if self.judge_agent is None:
+             if debate_steps:
+                 self.logger.debug(

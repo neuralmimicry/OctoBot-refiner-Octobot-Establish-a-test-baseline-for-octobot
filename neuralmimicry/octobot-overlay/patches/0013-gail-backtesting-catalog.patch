@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:27 +0100
+Subject: [PATCH 13/33] gail-backtesting-catalog
+
+Tag: build
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/tasks/main.yml + files/gail_backtesting_catalog_patch.py
+
+Ansible task: Add and validate the Gail backtesting catalog API compatibility patch
+---
+ .../Interfaces/web_interface/controllers/backtesting.py    | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/controllers/backtesting.py b/packages/tentacles/Services/Interfaces/web_interface/controllers/backtesting.py
+index f4a40688b229ba7596a78ead808431cb33646de5..efff2d84d0d4732708c8b206375adc0532db79c3 100644
+--- a/packages/tentacles/Services/Interfaces/web_interface/controllers/backtesting.py
++++ b/packages/tentacles/Services/Interfaces/web_interface/controllers/backtesting.py
+@@ -91,6 +91,13 @@ def register(blueprint):
+         elif flask.request.method == 'GET':
+             if flask.request.args:
+                 target = flask.request.args["update_type"]
++                # NEURALMIMICRY_GAIL_BACKTEST_DATA_FILES
++                if target == "backtesting_data_files":
++                    return flask.jsonify({
++                        "files": models.get_data_files_with_description(),
++                        "source": "backtesting",
++                    })
++
+                 if target == "backtesting_report":
+                     source = flask.request.args["source"]
+                     backtesting_report = models.get_backtesting_report(source)

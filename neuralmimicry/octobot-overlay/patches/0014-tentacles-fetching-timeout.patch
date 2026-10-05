@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:27 +0100
+Subject: [PATCH 14/33] tentacles-fetching-timeout
+
+Tag: build
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/tasks/main.yml
+
+Ansible task: Extend OctoBot source tentacle dependency discovery timeout
+---
+ .../octobot_tentacles_manager/workers/tentacles_worker.py       | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/tentacles_manager/octobot_tentacles_manager/workers/tentacles_worker.py b/packages/tentacles_manager/octobot_tentacles_manager/workers/tentacles_worker.py
+index 5d8124ec89fc26ab9991745b66d5f4f981c7af05..822c72928409c790abc641dbd7f651d907f70596 100644
+--- a/packages/tentacles_manager/octobot_tentacles_manager/workers/tentacles_worker.py
++++ b/packages/tentacles_manager/octobot_tentacles_manager/workers/tentacles_worker.py
+@@ -23,7 +23,7 @@ import octobot_tentacles_manager.util as util
+ 
+ 
+ class TentaclesWorker:
+-    TENTACLES_FETCHING_TIMEOUT = 120
++    TENTACLES_FETCHING_TIMEOUT = 600
+ 
+     def __init__(self,
+                  reference_tentacles_dir,
