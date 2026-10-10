@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Sat, 10 Oct 2026 03:30:00 +0000
+Subject: [PATCH 37/37] commons-html-content-type-guard
+
+Tag: build
+
+Reject values outside the annotated string contract before HTMLParser.feed,
+which otherwise silently accepts false-y non-string values such as an empty
+mapping.
+
+---
+diff --git a/packages/commons/octobot_commons/html_util.py b/packages/commons/octobot_commons/html_util.py
+--- a/packages/commons/octobot_commons/html_util.py
++++ b/packages/commons/octobot_commons/html_util.py
+@@ -34,5 +34,7 @@ def summarize_page_content(
+     :return: a list of (tag, content) tuples representing a html page's useful content
+     """
++    if not isinstance(html_content, str):
++        raise TypeError("html_content must be a string")
+     parser = _SummarizerHTMLParser(max_element_text_size)
+     parser.feed(html_content)
+     return parser.summary
