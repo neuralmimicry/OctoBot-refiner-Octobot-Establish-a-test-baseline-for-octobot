@@ -215,7 +215,17 @@ def main() -> None:
     target = Path(args.target).resolve()
     if not (target / "packages").is_dir() or not (target / "pants.toml").is_file():
         die(f"{target} does not look like an OctoBot source tree", 2)
-    series = read_series(set(args.skip_tag))
+    skip_tags = set(args.skip_tag)
+    test_root = target / "packages/tentacles/Services/Interfaces/web_interface/tests"
+    current_tester = test_root / "distribution_tester.py"
+    legacy_tester = test_root / "models/distributions/distribution_tester.py"
+    if current_tester.is_file():
+        skip_tags.add("legacy-web-tests")
+    elif legacy_tester.is_file():
+        skip_tags.add("modern-web-tests")
+    else:
+        die("cannot identify the web-interface test layout in the target tree")
+    series = read_series(skip_tags)
     stage = Stage(target, touched_paths(series))
     try:
         if fully_applied(stage, series):
