@@ -176,9 +176,10 @@ jobs:
 
     - name: Build web client SDK
       if: env.USES_TENTACLES == 'true'
+      working-directory: packages/client/octobot_client_ts
       run: |
         npm ci
-        npm run build -w packages/client/octobot_client_ts
+        npm run build
 
     - name: Install tentacles
       if: env.USES_TENTACLES == 'true'
