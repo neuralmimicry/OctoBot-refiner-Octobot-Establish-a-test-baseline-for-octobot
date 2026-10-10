@@ -5,7 +5,8 @@
 
 Guarantees
   * Idempotent: if the whole queue is already applied (every patch reverses
-    cleanly, last to first) nothing is written and "UNCHANGED" is printed.
+    cleanly, last to first, or has a declared semantic marker) nothing is
+    written and "UNCHANGED" is printed.
   * Never half-applies: the files touched by the queue are copied to a private
     git staging repo, the queue is applied and verified there (compile() for
     .py, json for .json), and only then are the results swapped into TARGET
@@ -172,8 +173,9 @@ def verify(stage: Stage) -> None:
 def fully_applied(stage: Stage, series) -> bool:
     for patch, _ in reversed(series):
         if stage.apply(patch, "-R").returncode != 0:
-            git(["reset", "-q", "--hard"], stage.root)
-            return False
+            if not already_present(stage, patch):
+                git(["reset", "-q", "--hard"], stage.root)
+                return False
     git(["reset", "-q", "--hard"], stage.root)
     return True
 
