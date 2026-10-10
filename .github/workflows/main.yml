@@ -20,6 +20,23 @@ jobs:
     name: NeuralMimicry overlay self-test (pinned upstream, idempotency)
     runs-on: [self-hosted, Linux, X64]
     steps:
+      # The self-hosted runner has a global post-checkout LFS hook. Install
+      # the pinned binary before checkout so sparse checkouts can run that hook.
+      - name: Set up checksum-pinned Git LFS
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+            --output "$archive"
+          echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/git-lfs"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+          git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+          test -n "$git_lfs_bin"
+          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          "$git_lfs_bin" version
+
       - uses: actions/checkout@v6
         with:
           sparse-checkout: neuralmimicry
