@@ -10,14 +10,12 @@ diff --git a/packages/tentacles/Services/Interfaces/web_interface/tests/test_neu
 index 05e1a0ef41547de166233f5df31cdab56b1be778..0000000000000000000000000000000000000000 100644
 --- a/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_api.py
 +++ b/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_api.py
-@@ -1,5 +1,6 @@
- import pytest
- 
+@@ -11,3 +11,4 @@
  import octobot.enums
 +import tentacles.Services.Interfaces.web_interface.models.trading as trading_model
  import tentacles.Services.Interfaces.web_interface.tests as web_interface_tests
  import tentacles.Services.Interfaces.web_interface.tests.models.distributions.distribution_tester as distribution_tester
-@@ -73,1 +73,9 @@
+@@ -72,1 +73,9 @@
                  assert {"name", "exchange", "id", "exchange_id", "enabled", "trading", "symbols"} <= set(entry)
 +
 +
