@@ -132,6 +132,14 @@ jobs:
         python-version: ${{ matrix.version }}
         architecture: ${{ matrix.arch }}
 
+    - name: Create isolated Python environment
+      run: |
+        octobot_venv="$(mktemp -d "$RUNNER_TEMP/octobot-ci-venv.XXXXXX")"
+        python -m venv "$octobot_venv"
+        echo "$octobot_venv/bin" >> "$GITHUB_PATH"
+        echo "VIRTUAL_ENV=$octobot_venv" >> "$GITHUB_ENV"
+        echo "PIP_REQUIRE_VIRTUALENV=true" >> "$GITHUB_ENV"
+
     - name: Set up Node.js
       if: env.USES_TENTACLES == 'true'
       uses: actions/setup-node@v6
