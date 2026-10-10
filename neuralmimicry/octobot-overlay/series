@@ -41,3 +41,4 @@ patches/0032-plan-manager-instruction-prompt.patch runtime-init
 patches/0033-web-interface-gail-route-tests.patch tests legacy-web-tests
 patches/0034-deterministic-updater-api-test.patch tests
 patches/0035-web-interface-gail-route-tests-modern-layout.patch tests modern-web-tests
+patches/0036-backtesting-pylint-database-exports.patch tests
