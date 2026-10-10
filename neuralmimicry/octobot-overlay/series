@@ -44,3 +44,5 @@ patches/0035-web-interface-gail-route-tests-modern-layout.patch tests modern-web
 patches/0036-backtesting-pylint-database-exports.patch tests
 patches/0037-commons-html-content-type-guard.patch build
 patches/0038-backtesting-route-response-guard.patch site
+patches/0039-strict-gail-order-exchange.patch site
+patches/0040-strict-gail-order-exchange-test.patch tests

@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Sat, 10 Oct 2026 08:49:00 +0000
+Subject: [PATCH 40/40] test strict Gail order exchange selection
+
+Tag: tests
+Ansible task: none (test-only)
+---
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_api.py b/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_api.py
+index 1e1fabec09fc0106f7802bd701efa66e7b767d7e..0000000000000000000000000000000000000000 100644
+--- a/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_api.py
++++ b/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_api.py
+@@ -1,5 +1,6 @@
+ import pytest
+ 
+ import octobot.enums
++import tentacles.Services.Interfaces.web_interface.models.trading as trading_model
+ import tentacles.Services.Interfaces.web_interface.tests as web_interface_tests
+ import tentacles.Services.Interfaces.web_interface.tests.distribution_tester as distribution_tester
+@@ -73,1 +73,9 @@
+                 assert {"name", "exchange", "id", "exchange_id", "enabled", "trading", "symbols"} <= set(entry)
++
++
++def test_gail_orders_reject_missing_exchange_even_with_one_active_manager(monkeypatch):
++    manager = object()
++    monkeypatch.setattr(trading_model.interfaces_util, "get_exchange_managers", lambda: [manager])
++    monkeypatch.setattr(trading_model.trading_api, "has_trader", lambda candidate: candidate is manager)
++    with pytest.raises(ValueError, match="Order exchange or exchange_id is required"):
++        trading_model._resolve_gail_order_exchange_manager({"symbol": "BTC/USDT"})
