@@ -386,6 +386,16 @@ jobs:
           OctoBot tentacles -d packages/tentacles -p any_platform.zip
           OctoBot tentacles --install --location output/any_platform.zip --all
 
+      - name: Validate and fingerprint source-matched tentacles
+        run: |
+          set -euo pipefail
+          test -d tentacles/Trading/Mode/ai_trading_mode
+          count="$(find tentacles -type f -name metadata.json | wc -l)"
+          test "${count}" -ge 150
+          printf '%s\n' "${count}" > tentacles/.swarmhpc-baked-count
+          cat /proc/sys/kernel/random/uuid > tentacles/.swarmhpc-baked-id
+          echo "Embedded ${count} source-matched tentacles"
+
       - name: Build OctoBot image
         run: >-
           podman build --platform linux/amd64 --tag "${IMAGE}:${SHA}"
@@ -399,11 +409,19 @@ jobs:
             --build-arg OCTOBOT_IMAGE="${IMAGE}:${SHA}" \
             --tag "${IMAGE}:${TEST}" .
 
+      - name: Run backtesting route acceptance tests
+        if: github.event_name == 'pull_request'
+        run: |
+          route_tests=tentacles/Services/Interfaces/web_interface/tests
+          podman run --rm -i \
+            -e DISABLE_SENTRY=True \
+            -e OCTOBOT_TEST_PATH="${route_tests}" \
+            "${IMAGE}:${TEST}"
+
       - name: Run container tests
         if: github.event_name == 'pull_request'
         run: |
-          podman run --rm -i -v "$(pwd)/tentacles:/octobot/tentacles:Z" \
-            -e DISABLE_SENTRY=True "${IMAGE}:${TEST}"
+          podman run --rm -i -e DISABLE_SENTRY=True "${IMAGE}:${TEST}"
 
       - name: Start and check container health
         if: github.event_name == 'pull_request'
@@ -411,8 +429,8 @@ jobs:
           set -euo pipefail
           cleanup() { podman rm --force "${CONTAINER_NAME}" >/dev/null 2>&1 || true; }
           trap cleanup EXIT
-          podman run --detach --volume "$(pwd)/tentacles:/octobot/tentacles:Z" \
-            --env DISABLE_SENTRY=True --name "${CONTAINER_NAME}" "${IMAGE}:${SHA}"
+          podman run --detach --env DISABLE_SENTRY=True \
+            --name "${CONTAINER_NAME}" "${IMAGE}:${SHA}"
           sleep "${WAIT_CONTAINER_TIME}"
           podman logs "${CONTAINER_NAME}"
           test "$(podman inspect --format '{{.State.Health.Status}}' "${CONTAINER_NAME}")" = healthy

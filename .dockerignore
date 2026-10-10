@@ -12,6 +12,8 @@ tox.ini
 
 # octobot
 tentacles
+!tentacles/
+!tentacles/**
 user
 logs
 

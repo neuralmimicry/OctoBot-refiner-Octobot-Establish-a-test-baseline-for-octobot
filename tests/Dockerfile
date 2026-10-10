@@ -5,8 +5,6 @@ FROM $OCTOBOT_IMAGE
 ENV PATH="/opt/venv/bin:$PATH"
 
 ENV CYTHON_IGNORE=true
-ENV OCTOBOT_TEST_TENTACLES_SOURCE=mounted
-
 COPY dev_requirements.txt .
 COPY tests tests
 RUN pip freeze && pip install --prefer-binary -r dev_requirements.txt

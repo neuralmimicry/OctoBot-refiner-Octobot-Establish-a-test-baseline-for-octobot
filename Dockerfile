@@ -46,6 +46,10 @@ COPY --from=base /opt/venv /opt/venv
 COPY octobot/config /octobot/octobot/config
 COPY start.py /octobot/
 COPY docker/* /octobot/
+# The image is built only after the workflow exports and installs tentacles
+# from this exact checked-out source tree. Keep them separate from the runtime
+# volume so Kubernetes can copy this immutable tree into its persistent volume.
+COPY tentacles/ /opt/octobot-baked-tentacles/
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt-get update \
@@ -62,7 +66,9 @@ RUN apt-get update \
         libtiff-dev \
     && rm -rf /var/lib/apt/lists/* \
     && chmod +x docker-entrypoint.sh \
-    && chmod +x tunnel.sh
+    && chmod +x tunnel.sh \
+    && test -s /opt/octobot-baked-tentacles/.swarmhpc-baked-count \
+    && test -s /opt/octobot-baked-tentacles/.swarmhpc-baked-id
 
 ENV PATH="/opt/venv/bin:$PATH"
 
