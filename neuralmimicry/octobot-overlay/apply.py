@@ -68,6 +68,27 @@ def read_series(skip_tags: set[str]) -> list[tuple[Path, list[str]]]:
 
 DIFF_HEADER = re.compile(r"^diff --git a/(\S+) b/(\S+)$", re.M)
 
+# Some main-branch consumers already contain an overlay change alongside
+# additional edits to the same file.  Exact reverse-application then fails on
+# changed context even though the overlay's semantic result is present.
+ALREADY_PRESENT_MARKERS = {
+    "0015-pants-ambiguity-by-source-root.patch": (
+        "pants.toml",
+        'ambiguity_resolution = "by_source_root"',
+    ),
+}
+
+
+def already_present(stage: Stage, patch: Path) -> bool:
+    if stage.apply(patch, "-R", "--check").returncode == 0:
+        return True
+    marker = ALREADY_PRESENT_MARKERS.get(patch.name)
+    if marker is None:
+        return False
+    rel, expected = marker
+    path = stage.root / rel
+    return path.is_file() and expected in path.read_text()
+
 
 def touched_paths(series) -> list[str]:
     paths: list[str] = []
@@ -207,7 +228,7 @@ def main() -> None:
                 applied += 1
                 print(f"APPLIED {name}")
                 continue
-            if stage.apply(patch, "-R", "--check").returncode == 0:
+            if already_present(stage, patch):
                 if args.strict:
                     die(f"{name} is already present in the target (--strict)")
                 present += 1
