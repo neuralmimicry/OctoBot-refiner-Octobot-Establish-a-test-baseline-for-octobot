@@ -43,8 +43,11 @@ interpreter_constraints = ["==3.13.*"]
 enable_resolves = false
 
 [python-infer]
-# Enable dependency inference
+# Shared requirements such as pydantic and numpy have multiple target owners.
+# Choose the owner nearest each source root so Pants retains import inference
+# without making package builds depend on ambiguous requirement targets.
 imports = true
+ambiguity_resolution = "by_source_root"
 conftests = true
 
 [docker]
@@ -54,4 +57,3 @@ build_verbose = true
 env_vars.add = [
   "DOCKER_BUILDKIT=1",
 ]
-
