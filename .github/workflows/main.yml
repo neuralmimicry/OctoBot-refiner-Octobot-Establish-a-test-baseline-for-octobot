@@ -509,7 +509,21 @@ jobs:
       - name: Build docs
         run: cd docs && npm run build
 
+      - name: Check Cloudflare preview credentials
+        id: cloudflare-preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [[ -n "$CLOUDFLARE_API_TOKEN" && -n "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Cloudflare preview skipped: API token or account ID is not configured."
+          fi
+
       - name: Upload version (preview URL)
+        if: steps.cloudflare-preview.outputs.available == 'true'
         uses: cloudflare/wrangler-action@v3
         with:
           wranglerVersion: "4"
