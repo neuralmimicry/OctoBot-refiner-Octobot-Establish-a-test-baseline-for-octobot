@@ -1,0 +1,18 @@
+diff --git a/tests/unit_tests/updater/test_updater.py b/tests/unit_tests/updater/test_updater.py
+index 969bb1d2..07de01ac 100644
+--- a/tests/unit_tests/updater/test_updater.py
++++ b/tests/unit_tests/updater/test_updater.py
+@@ -49,6 +49,12 @@ async def test_create_updater_from_api():
+     updater = octobot_api.get_updater()
+ 
+ 
+-async def test_should_update_on_updater_from_api():
++async def test_should_update_on_updater_from_api(monkeypatch):
+     updater = octobot_api.get_updater()
++
++    async def get_current_version():
++        return constants.VERSION
++
++    # The live GitHub release changes independently of this pinned source tree.
++    monkeypatch.setattr(updater, "get_latest_version", get_current_version)
+     assert not (await updater.should_be_updated())

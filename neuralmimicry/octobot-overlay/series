@@ -39,3 +39,4 @@ patches/0030-bull-bear-research-resilience.patch site
 patches/0031-backtesting-report-none-guard.patch site
 patches/0032-plan-manager-instruction-prompt.patch runtime-init
 patches/0033-web-interface-gail-route-tests.patch tests
+patches/0034-deterministic-updater-api-test.patch tests
