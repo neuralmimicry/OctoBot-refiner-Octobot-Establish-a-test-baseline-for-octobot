@@ -10,17 +10,67 @@ on:
 
 permissions: read-all
 
+env:
+  # actions/setup-python on self-hosted runners installs a shared-library CPython and
+  # exports LD_LIBRARY_PATH; Pants scrubs it from sandboxed processes unless passed through.
+  PANTS_SUBPROCESS_ENVIRONMENT_ENV_VARS: "+['LD_LIBRARY_PATH']"
+
 jobs:
+  overlay:
+    name: NeuralMimicry overlay self-test (pinned upstream, idempotency)
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      # The self-hosted runner has a global post-checkout LFS hook. Install
+      # the pinned binary before checkout so sparse checkouts can run that hook.
+      - name: Set up checksum-pinned Git LFS
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+            --output "$archive"
+          echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/git-lfs"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+          git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+          test -n "$git_lfs_bin"
+          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          "$git_lfs_bin" version
+
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: neuralmimicry
+      - name: Apply overlay to a fresh upstream checkout twice
+        run: neuralmimicry/octobot-overlay/selftest.sh
+
   build:
+    needs: [ overlay ]
     name: ${{ matrix.os }}${{ matrix.arch }} - Python ${{ matrix.version }} - Build wheel
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       matrix:
         os: [ ubuntu-latest ]
         arch: [ x64 ]
         version: [ "3.13.x" ]
     steps:
+      - name: Set up checksum-pinned Git LFS
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+            --output "$archive"
+          echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/git-lfs"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+          git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+          test -n "$git_lfs_bin"
+          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          "$git_lfs_bin" version
       - uses: actions/checkout@v6
+
+      - name: Apply NeuralMimicry overlay
+        run: python3 neuralmimicry/octobot-overlay/apply.py --target .
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -36,7 +86,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: packages/tentacles/Services/Interfaces/node_web_interface/.nvmrc
 
       - name: Install Rust toolchain
         if: hashFiles('packages/*/crates/*/Cargo.toml') != ''
@@ -67,7 +117,7 @@ jobs:
   tests:
     needs: [ build ]
     name: ${{ matrix.os }}${{ matrix.arch }} - Python ${{ matrix.version }} - ${{ matrix.package }}
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       matrix:
         os: [ ubuntu-latest ]
@@ -93,7 +143,25 @@ jobs:
       USES_TENTACLES: ${{ matrix.package == 'octobot' || matrix.package == 'packages/node' || matrix.package == 'packages/flow' || matrix.package == 'packages/copy' }}
 
     steps:
+    - name: Set up checksum-pinned Git LFS
+      run: |
+        set -euo pipefail
+        archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+        curl --fail --location --retry 3 \
+          https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+          --output "$archive"
+        echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+        mkdir -p "$RUNNER_TEMP/git-lfs"
+        tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+        git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+        test -n "$git_lfs_bin"
+        echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+        "$git_lfs_bin" version
+
     - uses: actions/checkout@v6
+
+    - name: Apply NeuralMimicry overlay
+      run: python3 neuralmimicry/octobot-overlay/apply.py --target .
 
     - name: Detect package features
       id: detect
@@ -110,11 +178,19 @@ jobs:
         python-version: ${{ matrix.version }}
         architecture: ${{ matrix.arch }}
 
+    - name: Create isolated Python environment
+      run: |
+        octobot_venv="$(mktemp -d "$RUNNER_TEMP/octobot-ci-venv.XXXXXX")"
+        python -m venv "$octobot_venv"
+        echo "$octobot_venv/bin" >> "$GITHUB_PATH"
+        echo "VIRTUAL_ENV=$octobot_venv" >> "$GITHUB_ENV"
+        echo "PIP_REQUIRE_VIRTUALENV=true" >> "$GITHUB_ENV"
+
     - name: Set up Node.js
-      if: matrix.package == 'octobot'
+      if: env.USES_TENTACLES == 'true'
       uses: actions/setup-node@v6
       with:
-        node-version: 22
+        node-version-file: packages/tentacles/Services/Interfaces/node_web_interface/.nvmrc
 
     - name: Download build wheel artifact
       uses: actions/download-artifact@v8
@@ -129,14 +205,15 @@ jobs:
 
     - name: Lint package
       run: |
+        # pylint exit status is a bitmask: fail on fatal (1), error (2) or
+        # usage error (32); tolerate warning (4), refactor (8), convention (16).
+        rc=0
         if [ -f "${{ matrix.package }}/standard.rc" ]; then
-          pylint --rcfile=${{ matrix.package }}/standard.rc ${{ matrix.package }}/
-          rc=$?
+          pylint --rcfile=${{ matrix.package }}/standard.rc ${{ matrix.package }}/ || rc=$?
         else
-          pylint --rcfile=standard.rc ${{ matrix.package }}/
-          rc=$?
+          pylint --rcfile=standard.rc ${{ matrix.package }}/ || rc=$?
         fi
-        if [ $rc -eq 1 ]; then exit 1; fi
+        if (( rc & 35 )); then exit $rc; fi
 
     - name: Install Rust toolchain
       if: steps.detect.outputs.has_rust == 'true'
@@ -151,6 +228,13 @@ jobs:
           cargo clippy --manifest-path "$crate/Cargo.toml" -- -D warnings
         done
 
+    - name: Build web client SDK
+      if: env.USES_TENTACLES == 'true'
+      working-directory: packages/client/octobot_client_ts
+      run: |
+        npm ci
+        npm run build
+
     - name: Install tentacles
       if: env.USES_TENTACLES == 'true'
       env:
@@ -163,21 +247,21 @@ jobs:
     - name: Run tests
       run: |
         if [ "${{ matrix.package }}" = "octobot" ]; then
-          pytest tests -n auto --dist loadfile
-          pytest --ignore=tentacles/Trading/Exchange tentacles -n auto --dist loadfile
+          pytest tests -n auto --dist loadfile -r ps
+          pytest --ignore=tentacles/Trading/Exchange tentacles -n auto --dist loadfile -r ps
         else
           if [ "${{ matrix.package }}" = "packages/node" ] || [ "${{ matrix.package }}" = "packages/flow" ] || [ "${{ matrix.package }}" = "packages/copy" ]; then
             echo "Running tests from root dir to allow tentacles import"
-            PYTHONPATH=.:$PYTHONPATH pytest ${{ matrix.package }}/tests -n auto --dist loadfile
+            PYTHONPATH=.:$PYTHONPATH pytest ${{ matrix.package }}/tests -n auto --dist loadfile -r ps
           else
             cd ${{ matrix.package }}
             if [ "${{ matrix.package }}" = "packages/tentacles_manager" ]; then
-              pytest tests
+              pytest tests -r ps
             else
               if [ "${{ matrix.package }}" = "packages/protocol" ]; then
-                pytest test
+                pytest test -r ps
               else
-                pytest tests -n auto --dist loadfile
+                pytest tests -n auto --dist loadfile -r ps
               fi
             fi
           fi
@@ -196,30 +280,52 @@ jobs:
       run: |
         find packages/tentacles -name "package.json" -not -path "*/node_modules/*" | while read pkg; do
           cd "$(dirname "$pkg")"
-          npm ci
           npm test
           cd - > /dev/null
         done
 
   docker:
-    name: Build & Push Docker images
+    name: Build & Push container images with Podman
     needs: [ build, tests ]
-    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: read
+      checks: write
+      pull-requests: write
       packages: write
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       matrix:
         os: [ ubuntu-latest ]
 
     steps:
+      - name: Set up checksum-pinned Git LFS
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+            --output "$archive"
+          echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/git-lfs"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+          git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+          test -n "$git_lfs_bin"
+          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          "$git_lfs_bin" version
+
       - uses: actions/checkout@v6
+
+      - name: Apply NeuralMimicry overlay
+        run: python3 neuralmimicry/octobot-overlay/apply.py --target .
+
+      - name: Verify Podman is available
+        run: podman version
 
       - name: Run hadolint
         uses: reviewdog/action-hadolint@v1
         with:
-          github_token: ${{ secrets.github_token }}
+          github_token: ${{ github.token }}
           hadolint_ignore: DL3013 DL3008
 
       - name: Set Environment Variables
@@ -227,7 +333,7 @@ jobs:
           OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]' | tr -d '-')"
           IMG=octobot
           echo "VERSION=${GITHUB_REF##*/}" >> $GITHUB_ENV
-          echo "IMAGE=${OWNER}/${IMG}" >> $GITHUB_ENV
+          echo "IMAGE=ghcr.io/${OWNER}/${IMG}" >> $GITHUB_ENV
           echo "LATEST=latest" >> $GITHUB_ENV
           echo "STAGING=staging" >> $GITHUB_ENV
           echo "STABLE=stable" >> $GITHUB_ENV
@@ -236,6 +342,13 @@ jobs:
           echo "CONTAINER_NAME=octobot" >> $GITHUB_ENV
           echo "CHECK_TENTACLE_CONTAINER_TIME=10" >> $GITHUB_ENV
           echo "WAIT_CONTAINER_TIME=80" >> $GITHUB_ENV
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            echo "TENTACLES_URL_TAG=" >> $GITHUB_ENV
+          elif [[ "${GITHUB_REF}" == "refs/heads/master" || "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "TENTACLES_URL_TAG=stable" >> $GITHUB_ENV
+          else
+            echo "TENTACLES_URL_TAG=latest" >> $GITHUB_ENV
+          fi
 
       - name: Set up Python ${{ matrix.version }}
         uses: actions/setup-python@v6
@@ -243,36 +356,19 @@ jobs:
           python-version: "3.13.x"
           architecture: x64
 
-      - name: Set up QEMU
-        id: qemu-setup
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: all
+      - name: Create isolated Python environment
+        run: |
+          octobot_venv="$(mktemp -d "$RUNNER_TEMP/octobot-container-venv.XXXXXX")"
+          python -m venv "$octobot_venv"
+          echo "$octobot_venv/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$octobot_venv" >> "$GITHUB_ENV"
+          echo "PIP_REQUIRE_VIRTUALENV=true" >> "$GITHUB_ENV"
 
-      - name: Print available platforms
-        run: echo ${{ steps.qemu.outputs.platforms }}
-
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver: docker-container
-          use: true
-
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-
-      - name: Login to Docker Hub
+      - name: Login to GitHub Container Registry
         if: github.event_name == 'push'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | podman login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
       - name: Download build wheel artifact
         uses: actions/download-artifact@v8
@@ -290,92 +386,98 @@ jobs:
           OctoBot tentacles -d packages/tentacles -p any_platform.zip
           OctoBot tentacles --install --location output/any_platform.zip --all
 
-      - name: Build latest
-        if: github.event_name != 'push'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          builder: ${{ steps.buildx.outputs.name }}
-          platforms: linux/amd64
-          # Using "load: true" forces the docker driver.
-          # Unfortunately, the "docker" driver does not support
-          # multi-platform builds.
-          load: true
-          push: false
-          tags: ${{ env.IMAGE }}:${{ env.SHA }}
-          build-args: |
-            TENTACLES_URL_TAG=${{ env.LATEST }}
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache
-
-      - name: Docker build test container
-        if: github.event_name != 'push'
+      - name: Validate and fingerprint source-matched tentacles
         run: |
-          docker build -f ./tests/Dockerfile --build-arg OCTOBOT_IMAGE=${{ env.IMAGE }}:${{ env.SHA }} -t ${{ env.IMAGE }}:${{ env.TEST }} .
+          set -euo pipefail
+          test -d tentacles/Trading/Mode/ai_trading_mode
+          count="$(find tentacles -type f -name metadata.json | wc -l)"
+          test "${count}" -ge 150
+          printf '%s\n' "${count}" > tentacles/.swarmhpc-baked-count
+          cat /proc/sys/kernel/random/uuid > tentacles/.swarmhpc-baked-id
+          echo "Embedded ${count} source-matched tentacles"
 
-      - name: run tests in docker
-        if: github.event_name != 'push'
+      - name: Build OctoBot image
+        run: >-
+          podman build --platform linux/amd64 --tag "${IMAGE}:${SHA}"
+          --build-arg TENTACLES_URL_TAG="${TENTACLES_URL_TAG}"
+          --build-arg VERSION="${VERSION}" .
+
+      - name: Build test container
+        if: github.event_name == 'pull_request'
         run: |
-          docker run -i -v $(pwd)/tentacles:/octobot/tentacles -e DISABLE_SENTRY=True ${{ env.IMAGE }}:${{ env.TEST }}
+          podman build --platform linux/amd64 -f ./tests/Dockerfile \
+            --build-arg OCTOBOT_IMAGE="${IMAGE}:${SHA}" \
+            --tag "${IMAGE}:${TEST}" .
 
-      - name: run and check health after start
-        if: github.event_name != 'push'
+      - name: Run backtesting route acceptance tests
+        if: github.event_name == 'pull_request'
         run: |
-          echo Start OctoBot docker container with tentacles...
-          docker run -id -v $(pwd)/tentacles:/octobot/tentacles -e DISABLE_SENTRY=True --name ${{ env.CONTAINER_NAME }} ${{ env.IMAGE }}:${{ env.LATEST }}
-          sleep ${{ env.WAIT_CONTAINER_TIME }}
-          docker logs ${{ env.CONTAINER_NAME }}
-          docker inspect ${{ env.CONTAINER_NAME }} | jq '.[].State.Health.Status' | grep "healthy"
+          route_tests=tentacles/Services/Interfaces/web_interface/tests
+          podman run --rm -i \
+            -e DISABLE_SENTRY=True \
+            -e OCTOBOT_TEST_PATH="${route_tests}" \
+            "${IMAGE}:${TEST}"
 
-      - name: Build and push latest
-        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags') && github.ref == 'refs/heads/dev'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          builder: ${{ steps.buildx.outputs.name }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ env.IMAGE }}:${{ env.LATEST }}
-          build-args: |
-            TENTACLES_URL_TAG=${{ env.LATEST }}
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache
+      - name: Run container tests
+        if: github.event_name == 'pull_request'
+        run: |
+          podman run --rm -i -e DISABLE_SENTRY=True "${IMAGE}:${TEST}"
 
-      - name: Build and push staging
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          builder: ${{ steps.buildx.outputs.name }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ env.IMAGE }}:${{ env.STAGING }}
-          build-args: |
-            TENTACLES_URL_TAG=${{ env.STABLE }}
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache
+      - name: Start and check container health
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          cleanup() { podman rm --force "${CONTAINER_NAME}" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          podman run --detach --env DISABLE_SENTRY=True \
+            --name "${CONTAINER_NAME}" "${IMAGE}:${SHA}"
+          sleep "${WAIT_CONTAINER_TIME}"
+          podman logs "${CONTAINER_NAME}"
+          test "$(podman inspect --format '{{.State.Health.Status}}' "${CONTAINER_NAME}")" = healthy
 
-      - name: Build and push on tag
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
-        uses: docker/build-push-action@v6
+      - name: Push release image tags
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          tags=()
+          if [[ "${GITHUB_REF}" == "refs/heads/dev" ]]; then
+            tags+=("${LATEST}")
+          elif [[ "${GITHUB_REF}" == "refs/heads/master" ]]; then
+            tags+=("${STAGING}")
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            tags+=("${LATEST}" "${STABLE}" "${VERSION}")
+          fi
+          # Keep an exact-source tag for every published image. The deployment
+          # consumes the digest recorded for this tag, never a moving channel.
+          immutable_tag="sha-${SHA}"
+          tags+=("${immutable_tag}")
+          for tag in "${tags[@]}"; do
+            podman tag "${IMAGE}:${SHA}" "${IMAGE}:${tag}"
+            if [[ "${tag}" == "${immutable_tag}" ]]; then
+              podman push --digestfile "${RUNNER_TEMP}/octobot-image.digest" "${IMAGE}:${tag}"
+            else
+              podman push "${IMAGE}:${tag}"
+            fi
+          done
+          digest="$(cat "${RUNNER_TEMP}/octobot-image.digest")"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          image_ref="${IMAGE}@${digest}"
+          printf '%s\n' "${image_ref}" > "${RUNNER_TEMP}/octobot-image-reference.txt"
+          printf 'Runner-built image: `%s`\n' "${image_ref}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Retain the immutable image reference
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v7
         with:
-          context: .
-          file: ./Dockerfile
-          builder: ${{ steps.buildx.outputs.name }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ env.IMAGE }}:${{ env.LATEST }}
-            ${{ env.IMAGE }}:${{ env.STABLE }}
-            ${{ env.IMAGE }}:${{ env.VERSION }}
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache
-  
+          name: octobot-image-reference-${{ github.sha }}
+          path: ${{ runner.temp }}/octobot-image-reference.txt
+          if-no-files-found: error
+
   tentacles:
-    needs: [ build, tests ]
+    needs: [ build, tests, publish-npm ]
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/')
     name: ${{ matrix.os }}${{ matrix.arch }} - Python ${{ matrix.version }} - Upload Tentacles
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       matrix:
         os: [ ubuntu-latest ]
@@ -383,7 +485,25 @@ jobs:
         version: [ "3.13.x" ]
 
     steps:
+      - name: Set up checksum-pinned Git LFS
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+            --output "$archive"
+          echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/git-lfs"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+          git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+          test -n "$git_lfs_bin"
+          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          "$git_lfs_bin" version
+
       - uses: actions/checkout@v6
+
+      - name: Apply NeuralMimicry overlay
+        run: python3 neuralmimicry/octobot-overlay/apply.py --target .
 
       - name: Set up Python ${{ matrix.version }}
         uses: actions/setup-python@v6
@@ -462,20 +582,38 @@ jobs:
   docs:
     name: Build & Deploy Docs
     needs: [build, tests]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
       deployments: write
 
     steps:
+      - name: Set up checksum-pinned Git LFS
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+            --output "$archive"
+          echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/git-lfs"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+          git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+          test -n "$git_lfs_bin"
+          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          "$git_lfs_bin" version
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           lfs: true
 
+      - name: Apply NeuralMimicry overlay
+        run: python3 neuralmimicry/octobot-overlay/apply.py --target .
+
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: packages/tentacles/Services/Interfaces/node_web_interface/.nvmrc
           cache: npm
           cache-dependency-path: docs/package-lock.json
 
@@ -488,7 +626,21 @@ jobs:
       - name: Build docs
         run: cd docs && npm run build
 
+      - name: Check Cloudflare preview credentials
+        id: cloudflare-preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [[ -n "$CLOUDFLARE_API_TOKEN" && -n "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Cloudflare preview skipped: API token or account ID is not configured."
+          fi
+
       - name: Upload version (preview URL)
+        if: steps.cloudflare-preview.outputs.available == 'true'
         uses: cloudflare/wrangler-action@v3
         with:
           wranglerVersion: "4"
@@ -510,18 +662,36 @@ jobs:
   publish-npm:
     name: Publish npm packages
     needs: [ build, tests ]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev')
-    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/'))
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
       id-token: write   # required for npm trusted publishing (OIDC, no token needed)
 
     steps:
+      - name: Set up checksum-pinned Git LFS
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+            --output "$archive"
+          echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/git-lfs"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+          git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+          test -n "$git_lfs_bin"
+          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          "$git_lfs_bin" version
+
       - uses: actions/checkout@v6
+
+      - name: Apply NeuralMimicry overlay
+        run: python3 neuralmimicry/octobot-overlay/apply.py --target .
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: packages/tentacles/Services/Interfaces/node_web_interface/.nvmrc
           registry-url: 'https://registry.npmjs.org'
 
       - name: Upgrade npm (trusted publishing requires >= 11.5.1)
@@ -540,11 +710,11 @@ jobs:
           fi
 
       - name: Publish octobot-client if version not already on npm
-        working-directory: packages/client/octobot_client_ts
         run: |
           npm ci
-          npm run build
-          npm test
+          npm run build -w packages/client/octobot_client_ts
+          npm test -w packages/client/octobot_client_ts
+          cd packages/client/octobot_client_ts
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
@@ -558,7 +728,7 @@ jobs:
     needs: [ build, tests ]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
     name: Source distribution - Python ${{ matrix.version }} - Deploy
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       matrix:
         os: [ ubuntu-latest ]
@@ -566,7 +736,25 @@ jobs:
         version: [ "3.13.x" ]
 
     steps:
+      - name: Set up checksum-pinned Git LFS
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+            --output "$archive"
+          echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/git-lfs"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+          git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+          test -n "$git_lfs_bin"
+          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          "$git_lfs_bin" version
+
       - uses: actions/checkout@v6
+
+      - name: Apply NeuralMimicry overlay
+        run: python3 neuralmimicry/octobot-overlay/apply.py --target .
 
       - name: Set up Python ${{ matrix.version }}
         uses: actions/setup-python@v6
@@ -589,20 +777,37 @@ jobs:
     needs: [ build, tests ]
     name: ${{ matrix.os }} - ${{ matrix.arch }} - binary
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ fromJSON(matrix.runs_on) }}
     strategy:
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
-        arch: [ x64, arm64 ]
-        exclude:
-          - os: windows-latest
-            arch: arm64
-          - os: ubuntu-latest # temporary disable until fixed
-            arch: arm64
-          - os: macos-latest
+        include:
+          - os: ubuntu-latest
             arch: x64
+            runs_on: '["self-hosted","Linux","X64"]'
+          - os: macos-latest
+            arch: arm64
+            runs_on: '["macos-latest"]'
+          - os: windows-latest
+            arch: x64
+            runs_on: '["windows-latest"]'
 
     steps:
+    - name: Set up checksum-pinned Git LFS
+      if: runner.os == 'Linux'
+      run: |
+        set -euo pipefail
+        archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+        curl --fail --location --retry 3 \
+          https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+          --output "$archive"
+        echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+        mkdir -p "$RUNNER_TEMP/git-lfs"
+        tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+        git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+        test -n "$git_lfs_bin"
+        echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+        "$git_lfs_bin" version
+
     - uses: actions/checkout@v6
 
     - name: Download wheel artifact
@@ -616,29 +821,6 @@ jobs:
       with:
         python-version: '3.13.x'
         architecture: x64
-
-    - name: Build OctoBot Binary on Linux arm64
-      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64'
-      uses: uraimo/run-on-arch-action@v3.0.1
-      with:
-        arch: aarch64
-        distro: ubuntu24.04
-        githubToken: ${{ github.token }}
-        dockerRunArgs: |
-          --volume "${PWD}/dist:/dist"
-        env: |
-          OCTOBOT_REPOSITORY_DIR: OctoBot
-          NLTK_DATA: nltk_data
-          BUILD_ARCH: ${{ matrix.arch }}
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends python3.12 python3-pip python3-dev python3-venv git gcc musl-dev libc-dev build-essential zlib1g zlib1g-dev
-          python3 -m venv /opt/octobot_venv
-          source /opt/octobot_venv/bin/activate
-          python -m pip install -U pip setuptools wheel
-          python -m pip install -r packages/binary/requirements.txt
-          python -m pip install /dist/octobot-*.whl
-          bash ./packages/binary/build_scripts/unix.sh
 
     - name: Build OctoBot Binary on Linux
       if: matrix.os == 'ubuntu-latest' && matrix.arch == 'x64'
@@ -706,7 +888,7 @@ jobs:
     needs: [ binary, docker, tentacles ]
     permissions:
       contents: write
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       matrix:
         os: [ ubuntu-latest ]
@@ -803,6 +985,7 @@ jobs:
     needs:
       - build
       - tests
+      - overlay
       - docker
       - binary
       - tentacles
@@ -810,6 +993,19 @@ jobs:
       - version
       - docs
       - publish-npm
-    uses: Drakkar-Software/.github/.github/workflows/failure_notify_workflow.yml@master
-    secrets:
-      DISCORD_GITHUB_WEBHOOK: ${{ secrets.DISCORD_GITHUB_WEBHOOK }}
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - name: Notify failure in Discord
+        env:
+          DISCORD_GITHUB_WEBHOOK: ${{ secrets.DISCORD_GITHUB_WEBHOOK }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$DISCORD_GITHUB_WEBHOOK" ]; then
+            echo "::notice::Discord webhook is not configured; skipping failure notification."
+            exit 0
+          fi
+          payload="{\"content\":\"OctoBot CI failed: ${RUN_URL}\"}"
+          curl --fail-with-body --silent --show-error --retry 3 \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "$DISCORD_GITHUB_WEBHOOK"

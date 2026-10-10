@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:27 +0100
+Subject: [PATCH 16/33] agents-instruction-value-normalizer
+
+Tag: runtime-init
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/templates/octobot-stack.yaml.j2 (init container apply_ai_team_tentacles_patch)
+
+Ansible task: apply_runtime_agent_schema_patch: octobot_agents/models.py
+---
+ packages/agents/octobot_agents/models.py | 27 ++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/packages/agents/octobot_agents/models.py b/packages/agents/octobot_agents/models.py
+index 00672ea45d45f047a5aa4aefe3d46f16d4ea8644..f8fe86505ca8c56c1e973deae21c716b73521421 100644
+--- a/packages/agents/octobot_agents/models.py
++++ b/packages/agents/octobot_agents/models.py
+@@ -13,6 +13,7 @@
+ #
+ #  You should have received a copy of the GNU General Public
+ #  License along with OctoBot. If not, see <https://www.gnu.org/licenses/>.
++import json
+ import typing
+ from typing import Any, Dict, List, Optional, Union, TypedDict
+ 
+@@ -130,6 +131,32 @@ class AgentInstruction(AgentBaseModel):
+     modification_type: str  # One of MODIFICATION_ADDITIONAL_INSTRUCTIONS, MODIFICATION_CUSTOM_PROMPT, etc.
+     value: Union[str, Dict[str, typing.Any]]  # The instruction content (string for prompts, dict for hints)
+ 
++    @pydantic.model_validator(mode="before")
++    @classmethod
++    def normalize_instruction_value(cls, data: Any) -> Any:
++        """Keep instruction values within the declared scalar/object contract."""
++        if not isinstance(data, dict) or "value" not in data:
++            return data
++        value = data.get("value")
++        if isinstance(value, list):
++            modification_type = data.get("modification_type")
++            if modification_type in (
++                constants.MODIFICATION_ADDITIONAL_INSTRUCTIONS,
++                constants.MODIFICATION_CUSTOM_PROMPT,
++            ):
++                normalized_value = "\n".join(
++                    item if isinstance(item, str) else json.dumps(item, sort_keys=True)
++                    for item in value
++                )
++            elif modification_type == constants.MODIFICATION_EXECUTION_HINTS:
++                normalized_value = {"channels": value}
++            else:
++                normalized_value = {"values": value}
++            return {**data, "value": normalized_value}
++        if value is not None and not isinstance(value, (str, dict)):
++            return {**data, "value": str(value)}
++        return data
++    
+ 
+ class DebatePhaseConfig(AgentBaseModel):
+     """Configuration for a debate phase: debators take turns, judge decides continue or exit."""

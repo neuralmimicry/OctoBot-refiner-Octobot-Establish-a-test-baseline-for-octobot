@@ -1,0 +1,168 @@
+From ce041c333a7732ea4702c7b53d89387130a86561 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay refresh <overlay@neuralmimicry.ai>
+Date: Sat, 10 Oct 2026 13:20:21 +0100
+Subject: [PATCH] backtesting-route-response-guard
+
+Tag: site
+
+Replaces: swarmhpc continuum_tenant_octobot_site.yml post_tasks
+
+Ansible task: Return bounded client errors for unsupported backtesting requests and diagnose route registration in the generated test image.
+---
+ .../web_interface/controllers/backtesting.py  | 20 ++++-
+ .../test_backtesting_route_validation.py      | 90 +++++++++++++++++++
+ 2 files changed, 107 insertions(+), 3 deletions(-)
+ create mode 100644 packages/tentacles/Services/Interfaces/web_interface/tests/test_backtesting_route_validation.py
+
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/controllers/backtesting.py b/packages/tentacles/Services/Interfaces/web_interface/controllers/backtesting.py
+index efff2d84..4f27f39e 100644
+--- a/packages/tentacles/Services/Interfaces/web_interface/controllers/backtesting.py
++++ b/packages/tentacles/Services/Interfaces/web_interface/controllers/backtesting.py
+@@ -34,7 +34,9 @@ def register(blueprint):
+             return flask.redirect(flask.url_for("home"))
+         if flask.request.method == 'POST':
+             try:
+-                action_type = flask.request.args["action_type"]
++                action_type = flask.request.args.get("action_type")
++                if action_type is None:
++                    return util.get_rest_reply("Missing backtesting action_type", 400)
+                 success = False
+                 reply = "Action failed"
+                 if action_type == "start_backtesting":
+@@ -80,6 +82,8 @@ def register(blueprint):
+                     )
+                 elif action_type == "stop_backtesting":
+                     success, reply = models.stop_previous_backtesting()
++                else:
++                    return util.get_rest_reply("Unsupported backtesting action_type", 400)
+                 if success:
+                     return util.get_rest_reply(flask.jsonify(reply))
+                 else:
+@@ -90,7 +94,14 @@ def register(blueprint):
+ 
+         elif flask.request.method == 'GET':
+             if flask.request.args:
+-                target = flask.request.args["update_type"]
++                target = flask.request.args.get("update_type")
++                if target == "backtesting_status":
++                    status, progress, error_count = models.get_backtesting_status()
++                    return flask.jsonify({
++                        "status": status,
++                        "progress": progress,
++                        "errors": error_count,
++                    })
+                 # NEURALMIMICRY_GAIL_BACKTEST_DATA_FILES
+                 if target == "backtesting_data_files":
+                     return flask.jsonify({
+@@ -99,9 +110,12 @@ def register(blueprint):
+                     })
+ 
+                 if target == "backtesting_report":
+-                    source = flask.request.args["source"]
++                    source = flask.request.args.get("source")
++                    if not source:
++                        return util.get_rest_reply("Missing backtesting report source", 400)
+                     backtesting_report = models.get_backtesting_report(source)
+                     return flask.jsonify(backtesting_report)
++                return util.get_rest_reply("Unsupported backtesting update_type", 400)
+ 
+             else:
+                 return flask.render_template('backtesting.html',
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/tests/test_backtesting_route_validation.py b/packages/tentacles/Services/Interfaces/web_interface/tests/test_backtesting_route_validation.py
+new file mode 100644
+index 00000000..81e94ed2
+--- /dev/null
++++ b/packages/tentacles/Services/Interfaces/web_interface/tests/test_backtesting_route_validation.py
+@@ -0,0 +1,90 @@
++#  Drakkar-Software OctoBot-Tentacles
++#  Copyright (c) Drakkar-Software, All rights reserved.
++#
++#  This library is free software; you can redistribute it and/or
++#  modify it under the terms of the GNU Lesser General Public
++#  License as published by the Free Software Foundation; either
++#  version 3.0 of the License, or (at your option) any later version.
++import unittest.mock as mock
++
++import aiohttp
++import octobot.enums
++import pytest
++
++import tentacles.Services.Interfaces.web_interface.models as web_interface_models
++import tentacles.Services.Interfaces.web_interface.tests as web_interface_tests
++
++
++pytestmark = pytest.mark.asyncio
++
++DISTRIBUTION = octobot.enums.OctoBotDistribution.DEFAULT
++
++
++def _assert_backtesting_route_registered(interface):
++    routes = [
++        (rule.rule, rule.endpoint, sorted(rule.methods))
++        for rule in interface.server_instance.url_map.iter_rules()
++        if "backtest" in rule.rule
++    ]
++    assert any(route[0] == "/backtesting" for route in routes), (
++        f"Flask did not register /backtesting; matching routes: {routes!r}"
++    )
++
++
++async def test_backtesting_get_returns_status():
++    with mock.patch.object(web_interface_models, "is_backtesting_enabled", return_value=True), \
++            mock.patch.object(web_interface_models, "get_backtesting_status", return_value=("not started", 0, 0)):
++        async with web_interface_tests.get_web_interface(False, DISTRIBUTION) as interface:
++            _assert_backtesting_route_registered(interface)
++            async with aiohttp.ClientSession() as session:
++                url = f"http://localhost:{interface.port}/backtesting?update_type=backtesting_status"
++                async with session.get(url, allow_redirects=False) as response:
++                    assert response.status == 200, await response.text()
++                    assert await response.json() == {"status": "not started", "progress": 0, "errors": 0}
++
++
++async def test_backtesting_get_returns_data_files():
++    with mock.patch.object(web_interface_models, "is_backtesting_enabled", return_value=True), \
++            mock.patch.object(web_interface_models, "get_data_files_with_description", return_value=[]):
++        async with web_interface_tests.get_web_interface(False, DISTRIBUTION) as interface:
++            async with aiohttp.ClientSession() as session:
++                url = f"http://localhost:{interface.port}/backtesting?update_type=backtesting_data_files"
++                async with session.get(url, allow_redirects=False) as response:
++                    assert response.status == 200
++                    assert await response.json() == {"files": [], "source": "backtesting"}
++
++
++async def test_backtesting_get_rejects_unsupported_query_without_server_error():
++    with mock.patch.object(web_interface_models, "is_backtesting_enabled", return_value=True):
++        async with web_interface_tests.get_web_interface(False, DISTRIBUTION) as interface:
++            async with aiohttp.ClientSession() as session:
++                url = f"http://localhost:{interface.port}/backtesting?unexpected=1"
++                async with session.get(url, allow_redirects=False) as response:
++                    assert response.status == 400
++
++
++async def test_backtesting_get_rejects_missing_report_source():
++    with mock.patch.object(web_interface_models, "is_backtesting_enabled", return_value=True):
++        async with web_interface_tests.get_web_interface(False, DISTRIBUTION) as interface:
++            async with aiohttp.ClientSession() as session:
++                url = f"http://localhost:{interface.port}/backtesting?update_type=backtesting_report"
++                async with session.get(url, allow_redirects=False) as response:
++                    assert response.status == 400
++
++
++async def test_backtesting_post_rejects_unsupported_action_without_server_error():
++    with mock.patch.object(web_interface_models, "is_backtesting_enabled", return_value=True):
++        async with web_interface_tests.get_web_interface(False, DISTRIBUTION) as interface:
++            async with aiohttp.ClientSession() as session:
++                url = f"http://localhost:{interface.port}/backtesting?action_type=unsupported"
++                async with session.post(url, json={}, allow_redirects=False) as response:
++                    assert response.status == 400
++
++
++async def test_backtesting_post_rejects_missing_action_type():
++    with mock.patch.object(web_interface_models, "is_backtesting_enabled", return_value=True):
++        async with web_interface_tests.get_web_interface(False, DISTRIBUTION) as interface:
++            async with aiohttp.ClientSession() as session:
++                url = f"http://localhost:{interface.port}/backtesting"
++                async with session.post(url, json={}, allow_redirects=False) as response:
++                    assert response.status == 400
+-- 
+2.53.0

@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:28 +0100
+Subject: [PATCH 20/33] langchain-structured-output-fallback
+
+Tag: site
+
+Replaces: swarmhpc continuum_tenant_octobot_site.yml post_tasks
+
+Ansible task: Patch OctoBot LangChain structured-output fallback in active tentacles volume
+---
+ .../langchain_service/langchain.py            | 41 +++++++++++++++----
+ 1 file changed, 33 insertions(+), 8 deletions(-)
+
+diff --git a/packages/tentacles/Services/Services_bases/langchain_service/langchain.py b/packages/tentacles/Services/Services_bases/langchain_service/langchain.py
+index a6e48103734c184a2f4b133c58cc7c2d73e79571..21dc97cf99ffcef9c936458a1f162b25c3177143 100644
+--- a/packages/tentacles/Services/Services_bases/langchain_service/langchain.py
++++ b/packages/tentacles/Services/Services_bases/langchain_service/langchain.py
+@@ -555,18 +555,29 @@ class LangChainService(services.AbstractAIService):
+                 for mw in middleware:
+                     client = mw(client, langchain_messages, invoke_kwargs)
+             
++            effective_model = model or self.model
++            is_ollama_compat_model = isinstance(effective_model, str) and effective_model.startswith("ollama/")
++            if json_output and is_ollama_compat_model:
++                no_think_instruction = "For this JSON request, do not use hidden reasoning or thinking mode. Output the final JSON only. /no_think"
++                if langchain_messages and isinstance(langchain_messages[0], SystemMessage):
++                    langchain_messages[0] = SystemMessage(content=f"{langchain_messages[0].content}\n\n{no_think_instruction}")
++                else:
++                    langchain_messages.insert(0, SystemMessage(content=no_think_instruction))
++
+             if json_output and response_schema:
+-                try:
+-                    client = client.with_structured_output(response_schema)
+-                    response = await client.ainvoke(langchain_messages, **invoke_kwargs)
+-                    return response.model_dump() if hasattr(response, 'model_dump') else response
+-                except Exception as e:
+-                    self.logger.warning(f"Structured output failed, falling back: {e}")
++                if not is_ollama_compat_model:
++                    try:
++                        structured_client = client.with_structured_output(response_schema)
++                        response = await structured_client.ainvoke(langchain_messages, **invoke_kwargs)
++                        return response.model_dump() if hasattr(response, 'model_dump') else response
++                    except Exception as e:
++                        self.logger.warning(f"Structured output failed, falling back: {e}")
+             
+             response = await client.ainvoke(langchain_messages, **invoke_kwargs)
+             
+-            if response.response_metadata:
+-                usage = response.response_metadata.get('usage', {}) or response.response_metadata.get('token_usage', {})
++            response_metadata = getattr(response, "response_metadata", None)
++            if response_metadata:
++                usage = response_metadata.get('usage', {}) or response_metadata.get('token_usage', {})
+                 if usage:
+                     total_tokens = usage.get('total_tokens', 0)
+                     if total_tokens:
+@@ -580,8 +591,22 @@ class LangChainService(services.AbstractAIService):
+                 }
+             
+             content = response.content
++            if isinstance(content, list):
++                content = "\n".join(
++                    str(part.get("text", part)) if isinstance(part, dict) else str(part)
++                    for part in content
++                )
+             
+             if json_output and content:
++                stripped_content = content.strip()
++                if stripped_content.startswith("```"):
++                    if stripped_content.startswith("```json"):
++                        stripped_content = stripped_content[len("```json"):]
++                    elif stripped_content.startswith("```"):
++                        stripped_content = stripped_content[len("```"):]
++                    if stripped_content.rstrip().endswith("```"):
++                        stripped_content = stripped_content.rstrip()[:-3]
++                    content = stripped_content.strip()
+                 try:
+                     return json.loads(content)
+                 except json.JSONDecodeError:

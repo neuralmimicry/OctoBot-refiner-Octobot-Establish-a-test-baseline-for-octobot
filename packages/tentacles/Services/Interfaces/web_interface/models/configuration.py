@@ -22,7 +22,6 @@ import copy
 import requests.adapters
 import urllib3.util.retry
 import typing
-import aiohttp.client_exceptions
 
 import gc
 
@@ -1160,37 +1159,20 @@ def _get_currency_logo_url(currency_id):
 async def _fetch_currency_logo(session, data_provider, currency_id):
     if not currency_id:
         return
-    try:
-        async with session.get(_get_currency_logo_url(currency_id)) as resp:
+    async with session.get(_get_currency_logo_url(currency_id)) as resp:
+        logo = None
+        try:
+            json_resp = await resp.json()
+            logo = json_resp["image"]["large"]
+        except KeyError:
             if resp.status == 429:
-                data_provider.mark_currency_logo_fetch_failure(currency_id, dump=False)
-                _get_logger().debug(
-                    f"Rate limited when trying to fetch logo for {currency_id}. Will retry later"
-                )
-                return
-            if resp.status >= 400:
-                data_provider.mark_currency_logo_fetch_failure(currency_id, dump=False)
-                _get_logger().warning(
-                    f"Unexpected error when fetching {currency_id} currency logos: "
-                    f"status: {resp.status} text: {await resp.text()}"
-                )
-                return
-            try:
-                json_resp = await resp.json()
-                logo = json_resp["image"]["large"]
-            except (aiohttp.client_exceptions.ContentTypeError, KeyError):
-                data_provider.mark_currency_logo_fetch_failure(currency_id, dump=False)
-                _get_logger().warning(
-                    f"Unexpected payload when fetching {currency_id} currency logos: "
-                    f"status: {resp.status}"
-                )
-                return
-            data_provider.set_currency_logo_url(currency_id, logo, dump=False)
-    except Exception as err:
-        data_provider.mark_currency_logo_fetch_failure(currency_id, dump=False)
-        _get_logger().warning(
-            f"Unexpected error when fetching {currency_id} currency logos: {err}"
-        )
+                _get_logger().debug(f"Rate limitted when trying to fetch logo for {currency_id}. Will retry later")
+            else:
+                # not rate limit: problem
+                _get_logger().warning(f"Unexpected error when fetching {currency_id} currency logos: "
+                                      f"status: {resp.status} text: {await resp.text()}")
+        # can't fetch image for some reason, use default
+        data_provider.set_currency_logo_url(currency_id, logo, dump=False)
 
 
 async def _fetch_missing_currency_logos(data_provider, currency_ids):
@@ -1200,7 +1182,7 @@ async def _fetch_missing_currency_logos(data_provider, currency_ids):
             *(
                 _fetch_currency_logo(session, data_provider, currency_id)
                 for currency_id in currency_ids
-                if data_provider.should_fetch_currency_logo_url(currency_id)
+                if data_provider.get_currency_logo_url(currency_id) is None
             )
         )
     data_provider.dump_saved_data()
@@ -1210,7 +1192,7 @@ def get_currency_logo_urls(currency_ids):
     import tentacles.Services.Interfaces.web_interface.flask_util as flask_util
     data_provider = flask_util.BrowsingDataProvider.instance()
     if any(
-        data_provider.should_fetch_currency_logo_url(currency_id)
+        data_provider.get_currency_logo_url(currency_id) is None
         for currency_id in currency_ids
     ):
         interfaces_util.run_in_bot_async_executor(_fetch_missing_currency_logos(data_provider, currency_ids))

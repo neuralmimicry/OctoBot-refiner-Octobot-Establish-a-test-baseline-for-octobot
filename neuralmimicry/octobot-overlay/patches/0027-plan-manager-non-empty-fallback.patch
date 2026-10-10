@@ -1,0 +1,125 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:28 +0100
+Subject: [PATCH 27/33] plan-manager-non-empty-fallback
+
+Tag: site
+
+Replaces: swarmhpc continuum_tenant_octobot_site.yml post_tasks
+
+Ansible task: Patch OctoBot AI plan manager non-empty fallback safeguards in active tentacles volume
+---
+ .../ai_plan_manager_agent.py                  | 57 ++++++++++++++++++-
+ 1 file changed, 54 insertions(+), 3 deletions(-)
+
+diff --git a/packages/tentacles/Agent/teams/default_manager_agent/ai_plan_manager_agent.py b/packages/tentacles/Agent/teams/default_manager_agent/ai_plan_manager_agent.py
+index 08bc8d647bcdfb37cd4ec93f01b28382f82ced31..5cf1bed162cf9035cce323e459a387c8ecb39944 100644
+--- a/packages/tentacles/Agent/teams/default_manager_agent/ai_plan_manager_agent.py
++++ b/packages/tentacles/Agent/teams/default_manager_agent/ai_plan_manager_agent.py
+@@ -84,6 +84,7 @@ You may include zero, one, or multiple debate steps in the plan. Debate steps ru
+ Critical requirements:
+ - Every agent step MUST include a non-empty agent_name.
+ - agent_name MUST be one of the provided agent names in the context. Do NOT invent new names.
++- Execution plans MUST contain at least one agent step. Never return an empty steps array.
+ - Output ONLY valid JSON matching the ExecutionPlan schema. No markdown or extra text."""
+ 
+     def _repair_execution_plan(
+@@ -185,6 +186,52 @@ Critical requirements:
+         except (pydantic.ValidationError, ValueError):
+             return None
+     
++    def _build_deterministic_fallback_plan(self, team_producer: typing.Any) -> agent_models.ExecutionPlan:
++        execution_order = team_producer._get_execution_order()
++        incoming_edges, _ = team_producer._build_dag()
++        steps: typing.List[agent_models.ExecutionStep] = []
++        for agent in execution_order:
++            channel_type = agent.AGENT_CHANNEL
++            if channel_type is None:
++                continue
++            predecessors = incoming_edges.get(channel_type, [])
++            wait_for: typing.Optional[typing.List[str]] = None
++            if predecessors:
++                wait_for = []
++                for pred_channel in predecessors:
++                    pred_agent = team_producer._producer_by_channel.get(pred_channel)
++                    if pred_agent:
++                        wait_for.append(pred_agent.name)
++            steps.append(
++                agent_models.ExecutionStep(
++                    agent_name=agent.name,
++                    instructions=None,
++                    wait_for=wait_for,
++                    skip=False,
++                )
++            )
++        return agent_models.ExecutionPlan(
++            steps=steps,
++            loop=False,
++            loop_condition=None,
++            max_iterations=None,
++        )
++
++    def _ensure_non_empty_execution_plan(
++        self,
++        execution_plan: agent_models.ExecutionPlan,
++        team_producer: typing.Any,
++    ) -> agent_models.ExecutionPlan:
++        if any(not step.skip for step in execution_plan.steps):
++            return execution_plan
++        fallback_plan = self._build_deterministic_fallback_plan(team_producer)
++        if any(not step.skip for step in fallback_plan.steps):
++            self.logger.warning(
++                "Received empty/fully-skipped execution plan. Falling back to deterministic topological plan."
++            )
++            return fallback_plan
++        raise ValueError("Unable to build a non-empty execution plan from team topology.")
++
+     async def execute(
+         self,
+         input_data: typing.Union[agent_models.ManagerInput, typing.Dict[str, typing.Any]],
+@@ -245,7 +292,8 @@ Instructions: {self.format_data(instructions) if instructions else "None"}
+ 
+ Create an execution plan. Use agent steps (step_type "agent" or omit) for single-agent steps and debate steps (step_type "debate" with debate_config) when you want debators to argue and a judge to decide; you can include multiple debate steps if needed.
+ 
+-CRITICAL: agent_name MUST be exactly one of the provided agent names. Do NOT invent names."""
++CRITICAL: agent_name MUST be exactly one of the provided agent names. Do NOT invent names.
++CRITICAL: steps must not be empty."""
+             },
+         ]
+         
+@@ -262,11 +310,12 @@ CRITICAL: agent_name MUST be exactly one of the provided agent names. Do NOT inv
+                 response_data,
+                 allowed_agent_names,
+             )
++            execution_plan = self._ensure_non_empty_execution_plan(execution_plan, team_producer)
+         except (pydantic.ValidationError, ValueError) as e:
+             repaired = self._repair_execution_plan(response_data, allowed_agent_names)
+             if repaired is not None:
+                 self.logger.warning("Recovered invalid execution plan by repairing steps.")
+-                return repaired
++                return self._ensure_non_empty_execution_plan(repaired, team_producer)
+             self.logger.warning(f"Invalid execution plan. Retrying once. Error: {e}")
+             retry_messages = [
+                 {"role": "system", "content": self.prompt},
+@@ -281,6 +330,7 @@ Initial Data: {self.format_data(initial_data)}
+ Instructions: {self.format_data(instructions) if instructions else "None"}
+ 
+ CRITICAL: Every agent step MUST include agent_name (non-empty string). 
++CRITICAL: steps must not be empty.
+ Create an execution plan. Use agent steps (step_type "agent" or omit) for single-agent steps and debate steps (step_type "debate" with debate_config) when you want debators to argue and a judge to decide; you can include multiple debate steps if needed."""
+                 },
+             ]
+@@ -295,11 +345,12 @@ Create an execution plan. Use agent steps (step_type "agent" or omit) for single
+                     response_data,
+                     allowed_agent_names,
+                 )
++                execution_plan = self._ensure_non_empty_execution_plan(execution_plan, team_producer)
+             except (pydantic.ValidationError, ValueError):
+                 repaired = self._repair_execution_plan(response_data, allowed_agent_names)
+                 if repaired is not None:
+                     self.logger.warning("Recovered invalid execution plan by repairing steps after retry.")
+-                    return repaired
++                    return self._ensure_non_empty_execution_plan(repaired, team_producer)
+                 raise
+         
+         # Debate step normalization is handled in the team executor

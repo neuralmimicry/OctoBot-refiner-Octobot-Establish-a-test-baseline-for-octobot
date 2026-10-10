@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:28 +0100
+Subject: [PATCH 21/33] langchain-timeout-override
+
+Tag: site
+
+Replaces: swarmhpc continuum_tenant_octobot_site.yml post_tasks
+
+Ansible task: Patch OctoBot LangChain timeout override in active tentacles volume (LANGCHAIN_HTTP_TIMEOUT default rendered with the site value 1200)
+---
+ .../Services/Services_bases/langchain_service/langchain.py     | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/packages/tentacles/Services/Services_bases/langchain_service/langchain.py b/packages/tentacles/Services/Services_bases/langchain_service/langchain.py
+index 21dc97cf99ffcef9c936458a1f162b25c3177143..0897d2e86efdffa73e13499b6f4232815e39312f 100644
+--- a/packages/tentacles/Services/Services_bases/langchain_service/langchain.py
++++ b/packages/tentacles/Services/Services_bases/langchain_service/langchain.py
+@@ -119,7 +119,8 @@ class LangChainService(services.AbstractAIService):
+     
+     BACKTESTING_ENABLED = True
+     NO_TOKEN_LIMIT_VALUE = -1
+-    HTTP_TIMEOUT = 300.0
++    HTTP_TIMEOUT = float(os.getenv("LANGCHAIN_HTTP_TIMEOUT", "1200"))
++
+ 
+     def get_fields_description(self):
+         if self._env_secret_key is None:

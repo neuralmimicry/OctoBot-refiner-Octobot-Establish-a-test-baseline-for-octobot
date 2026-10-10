@@ -42,9 +42,22 @@ root_patterns = [
 interpreter_constraints = ["==3.13.*"]
 enable_resolves = false
 
+[python-bootstrap]
+search_path = ["<PATH>", "<PYENV>"]
+
+[subprocess-environment]
+# actions/setup-python on self-hosted Linux runners installs a shared-library
+# CPython build and exports LD_LIBRARY_PATH so libpython3.13.so can be found.
+# Pants scrubs the environment of its sandboxed processes, which makes that
+# interpreter look "broken" to Pex unless LD_LIBRARY_PATH is passed through.
+env_vars.add = ["LD_LIBRARY_PATH"]
+
 [python-infer]
-# Enable dependency inference
+# Shared requirements such as pydantic and numpy have multiple target owners.
+# Choose the owner nearest each source root so Pants retains import inference
+# without making package builds depend on ambiguous requirement targets.
 imports = true
+ambiguity_resolution = "by_source_root"
 conftests = true
 
 [docker]
@@ -54,4 +67,3 @@ build_verbose = true
 env_vars.add = [
   "DOCKER_BUILDKIT=1",
 ]
-

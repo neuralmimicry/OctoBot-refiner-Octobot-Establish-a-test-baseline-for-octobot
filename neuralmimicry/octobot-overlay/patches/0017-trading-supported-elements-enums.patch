@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:27 +0100
+Subject: [PATCH 17/33] trading-supported-elements-enums
+
+Tag: runtime-init
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/templates/octobot-stack.yaml.j2 (init container apply_ai_team_tentacles_patch)
+
+Ansible task: apply_runtime_agent_schema_patch: octobot_trading/enums.py
+---
+ packages/trading/octobot_trading/enums.py | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/packages/trading/octobot_trading/enums.py b/packages/trading/octobot_trading/enums.py
+index c51ab30037a63727cfbc837b6b955b2225065cbb..288f447a20dfd4212d9c13bbee42a45627af246b 100644
+--- a/packages/trading/octobot_trading/enums.py
++++ b/packages/trading/octobot_trading/enums.py
+@@ -769,6 +769,8 @@ class ExchangeSupportedElements(enum.StrEnum):
+     SPOT = "spot"
+     ORDERS = "orders"
+     BUNDLED_ORDERS = "bundled_orders"
++    SUPPORTED_BUNDLED_ORDERS = "supported_bundled_orders"
++    UNSUPPORTED_ORDERS = "unsupported_orders"
+ 
+ 
+ DEFAULT_EXCHANGE_OPTION_VALUES = {

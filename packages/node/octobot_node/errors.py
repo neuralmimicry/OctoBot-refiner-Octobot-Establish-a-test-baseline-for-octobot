@@ -98,6 +98,10 @@ class AmbiguousActiveAutomationWorkflowError(UserActionError):
     """Raised when more than one active automation workflow matches the stop request (parent id / wallet filter)."""
 
 
+class AutomationStopConfirmationTimeoutError(UserActionError):
+    """Raised when a stop update was sent but terminal workflow state did not confirm it."""
+
+
 class UnknownTradingTypeError(UserActionError):
     """Raised when the trading type is unknown."""
 

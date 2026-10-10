@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:28 +0100
+Subject: [PATCH 19/33] web-node-distribution-helpers
+
+Tag: runtime-init
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/templates/octobot-stack.yaml.j2 (init container apply_ai_team_tentacles_patch)
+
+Ansible task: web interface node distribution compatibility
+---
+ .../models/distributions/__init__.py          | 31 +++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/models/distributions/__init__.py b/packages/tentacles/Services/Interfaces/web_interface/models/distributions/__init__.py
+index 9720d459b2b87a78df42b14b66c1d78b8b3a94ee..3766c557302dc1a2306335216791f9e70e3e3deb 100644
+--- a/packages/tentacles/Services/Interfaces/web_interface/models/distributions/__init__.py
++++ b/packages/tentacles/Services/Interfaces/web_interface/models/distributions/__init__.py
+@@ -26,12 +26,43 @@ from tentacles.Services.Interfaces.web_interface.models.distributions.node impor
+     get_node_local_endpoint,
+     get_node_web_ui_url,
+ )
++import os
++import socket
++import typing
++
++import octobot_services.constants as services_constants
++import tentacles.Services.Services_bases as Service_bases
++
++
++def get_node_web_ui_url() -> typing.Optional[str]:
++    node_api_service = Service_bases.NodeApiService.instance()
++    if not Service_bases.NodeApiService.get_is_enabled(node_api_service.config):
++        return None
++    return f"{node_api_service.get_node_api_url().rstrip('/')}/app"
++
++
++def get_node_local_endpoint() -> tuple[str, int]:
++    node_api_service = Service_bases.NodeApiService.instance()
++    port = node_api_service.get_bind_port()
++    bind_address = os.getenv(services_constants.ENV_NODE_API_ADDRESS)
++    if bind_address and bind_address not in ("0.0.0.0", "127.0.0.1"):
++        local_ip = bind_address
++    else:
++        try:
++            local_ip = socket.gethostbyname(socket.gethostname())
++        except OSError:
++            local_ip = "127.0.0.1"
++    return local_ip, port
++
++
+ from tentacles.Services.Interfaces.web_interface.models.distributions.prediction_market import (
+     save_prediction_market_configuration,
+     get_prediction_market_services,
+ )
+ 
+ __all__ = [
++    "get_node_local_endpoint",
++    "get_node_web_ui_url",
+     "save_market_making_configuration",
+     "get_market_making_services",
+     "get_node_local_endpoint",

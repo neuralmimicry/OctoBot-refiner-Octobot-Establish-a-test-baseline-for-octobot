@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:28 +0100
+Subject: [PATCH 24/33] technical-analysis-trend-normalization
+
+Tag: site
+
+Replaces: swarmhpc continuum_tenant_octobot_site.yml post_tasks
+
+Ansible task: Patch OctoBot technical-analysis trend normalization in active tentacles volume
+---
+ .../Agent/sub_agents/technical_analysis_agent/models.py   | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/packages/tentacles/Agent/sub_agents/technical_analysis_agent/models.py b/packages/tentacles/Agent/sub_agents/technical_analysis_agent/models.py
+index a2f4afd39740ee466e31e5cf6376aeb3584ffbd0..e52e9a19a0fb52ce6d796e2fa24ecda202017164 100644
+--- a/packages/tentacles/Agent/sub_agents/technical_analysis_agent/models.py
++++ b/packages/tentacles/Agent/sub_agents/technical_analysis_agent/models.py
+@@ -60,6 +60,14 @@ class TechnicalAnalysisOutput(agent_models.AgentBaseModel):
+         description="Trading recommendations based on technical analysis. Leave empty if no specific recommendations."
+     )
+     
++    @field_validator("trend", mode="before")
++    def normalize_trend(cls, v):
++        if v is None:
++            return None
++        if isinstance(v, str) and not v.strip():
++            return None
++        return v
++
+     @field_validator("trend")
+     def validate_trend(cls, v: str) -> str:
+         if v is None:

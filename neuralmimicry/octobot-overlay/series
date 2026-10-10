@@ -1,0 +1,48 @@
+# NeuralMimicry OctoBot overlay patch queue, applied in order by ./apply.py.
+# Format: <patch file> [tag ...]   (tags let the deploy skip a group with --skip-tag)
+#   build        - former inline source edits in swarmhpc continuum_tenant_octobot tasks/main.yml
+#   ai-team      - same, gated by continuum_tenant_octobot_build_patch_ai_team_enable
+#   runtime-init - former init-container edits (octobot-stack.yaml.j2 apply_ai_team_tentacles_patch),
+#                  gated by continuum_tenant_octobot_bootstrap_tentacles_apply_ai_team_patch
+#   site         - former kubectl-exec edits in continuum_tenant_octobot_site.yml post_tasks
+#   tests        - test-only changes (no runtime effect)
+patches/0001-gail-compat-api-routes.patch build
+patches/0002-ai-team-judge-config.patch ai-team
+patches/0003-agents-debate-judge-fallback.patch ai-team
+patches/0004-agents-tools-manager-debate-config.patch ai-team
+patches/0005-ai-index-debate-log-guard.patch ai-team
+patches/0006-ai-index-strategy-wait-fallback.patch ai-team
+patches/0007-distribution-predecessor-merge.patch ai-team
+patches/0008-plan-manager-execution-plan-repair.patch ai-team
+patches/0009-profile-copy-import-guard.patch ai-team
+patches/0010-tentacles-temp-dir.patch ai-team
+patches/0011-node-web-task-output-compat.patch build
+patches/0012-gail-order-api.patch build
+patches/0013-gail-backtesting-catalog.patch build
+patches/0014-tentacles-fetching-timeout.patch build
+patches/0015-pants-ambiguity-by-source-root.patch build
+patches/0016-agents-instruction-value-normalizer.patch runtime-init
+patches/0017-trading-supported-elements-enums.patch runtime-init
+patches/0018-web-portfolio-api-compat.patch runtime-init
+patches/0019-web-node-distribution-helpers.patch runtime-init
+patches/0020-langchain-structured-output-fallback.patch site
+patches/0021-langchain-timeout-override.patch site
+patches/0022-gpt-timeout-max-tokens.patch site
+patches/0023-gpt-completion-retry.patch site
+patches/0024-technical-analysis-trend-normalization.patch site
+patches/0025-plan-manager-repair-runtime.patch site
+patches/0026-plan-manager-schema-sanitization.patch site
+patches/0027-plan-manager-non-empty-fallback.patch site
+patches/0028-memory-agent-json-repair.patch site
+patches/0029-critic-quality-payload-coercion.patch site
+patches/0030-bull-bear-research-resilience.patch site
+patches/0031-backtesting-report-none-guard.patch site
+patches/0032-plan-manager-instruction-prompt.patch runtime-init
+patches/0033-web-interface-gail-route-tests.patch tests legacy-web-tests
+patches/0034-deterministic-updater-api-test.patch tests
+patches/0035-web-interface-gail-route-tests-modern-layout.patch tests modern-web-tests
+patches/0036-backtesting-pylint-database-exports.patch tests
+patches/0037-commons-html-content-type-guard.patch build
+patches/0038-backtesting-route-response-guard.patch site
+patches/0039-strict-gail-order-exchange.patch site
+patches/0040-strict-gail-order-exchange-test.patch tests

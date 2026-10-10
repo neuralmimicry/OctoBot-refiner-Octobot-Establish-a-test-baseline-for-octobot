@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Sat, 10 Oct 2026 08:49:00 +0000
+Subject: [PATCH 39/40] require explicit exchange for Gail orders
+
+Tag: site
+Ansible task: Enforce strict OctoBot order exchange selection in active tentacles volume
+---
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/models/trading.py b/packages/tentacles/Services/Interfaces/web_interface/models/trading.py
+index 924e826ecdaaa170fab76205821a4f66fc489abd..0000000000000000000000000000000000000000 100644
+--- a/packages/tentacles/Services/Interfaces/web_interface/models/trading.py
++++ b/packages/tentacles/Services/Interfaces/web_interface/models/trading.py
+@@ -410,5 +410,7 @@
+         if not trading_api.has_trader(manager):
+             raise ValueError(f"Exchange {exchange_id} has no active trader")
+         return manager
+ 
++    if not exchange_name:
++        raise ValueError("Order exchange or exchange_id is required")
+     managers = [
+         manager
+         for manager in interfaces_util.get_exchange_managers()

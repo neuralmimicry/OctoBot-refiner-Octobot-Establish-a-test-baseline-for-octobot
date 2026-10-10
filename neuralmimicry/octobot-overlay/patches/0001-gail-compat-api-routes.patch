@@ -1,0 +1,175 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:26 +0100
+Subject: [PATCH 01/33] gail-compat-api-routes
+
+Tag: build
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/tasks/main.yml
+
+Ansible task: Patch OctoBot Gail compatibility API routes in source tree
+---
+ .../Interfaces/web_interface/api/exchanges.py |  23 ++++
+ .../Interfaces/web_interface/api/trading.py   | 102 +++++++++++++++++-
+ 2 files changed, 124 insertions(+), 1 deletion(-)
+
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/api/exchanges.py b/packages/tentacles/Services/Interfaces/web_interface/api/exchanges.py
+index d4356ff1d003ac89289fbc66f79787c316bab73e..d77163442f2fdb88e8e3ca04f62d8f865729a92a 100644
+--- a/packages/tentacles/Services/Interfaces/web_interface/api/exchanges.py
++++ b/packages/tentacles/Services/Interfaces/web_interface/api/exchanges.py
+@@ -15,12 +15,35 @@
+ #  License along with this library.
+ import flask
+ 
++import octobot_trading.api as trading_api
++import octobot_services.interfaces.util as interfaces_util
++
+ import tentacles.Services.Interfaces.web_interface.login as login
+ import tentacles.Services.Interfaces.web_interface.models as models
+ import tentacles.Services.Interfaces.web_interface.util as util
+ 
+ 
+ def register(blueprint):
++
++    @blueprint.route("/exchanges")
++    @login.login_required_when_activated
++    def exchanges():
++        """Return a machine-readable inventory for Gail's venue selection."""
++        result = []
++        for exchange_manager in interfaces_util.get_exchange_managers():
++            exchange_name = trading_api.get_exchange_name(exchange_manager)
++            exchange_id = trading_api.get_exchange_manager_id(exchange_manager)
++            result.append({
++                "name": exchange_name,
++                "exchange": exchange_name,
++                "id": exchange_id,
++                "exchange_id": exchange_id,
++                "enabled": True,
++                "trading": trading_api.is_trader_existing_and_enabled(exchange_manager),
++                "symbols": sorted(trading_api.get_trading_pairs(exchange_manager)),
++            })
++        return flask.jsonify(result)
++
+     @blueprint.route("/are_compatible_accounts", methods=['POST'])
+     @login.login_required_when_activated
+     def are_compatible_accounts():
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/api/trading.py b/packages/tentacles/Services/Interfaces/web_interface/api/trading.py
+index cf88a5be763d09c3e6d9d6e1d529494270bf4ed6..d290745b632b43b7e566b740bf6d32f6877a1c19 100644
+--- a/packages/tentacles/Services/Interfaces/web_interface/api/trading.py
++++ b/packages/tentacles/Services/Interfaces/web_interface/api/trading.py
+@@ -14,14 +14,114 @@
+ #  You should have received a copy of the GNU Lesser General Public
+ #  License along with this library.
+ import flask
++import decimal
++import datetime
+ 
+ import octobot_services.interfaces.util as interfaces_util
++import tentacles.Services.Interfaces.web_interface as web_interface
+ import tentacles.Services.Interfaces.web_interface.util as util
+ import tentacles.Services.Interfaces.web_interface.login as login
+ import tentacles.Services.Interfaces.web_interface.models as models
+-
++import octobot_trading.api as trading_api
++
++
++
++def _json_safe(value):
++    """Convert OctoBot runtime values into stable JSON primitives."""
++    if isinstance(value, decimal.Decimal):
++        return float(value) if value.is_finite() else None
++    if isinstance(value, (datetime.datetime, datetime.date)):
++        return value.isoformat()
++    if isinstance(value, dict):
++        return {str(key): _json_safe(item) for key, item in value.items()}
++    if isinstance(value, (list, tuple, set)):
++        return [_json_safe(item) for item in value]
++    if hasattr(value, "value") and not isinstance(value, (str, bytes)):
++        return _json_safe(value.value)
++    if value is None or isinstance(value, (str, int, float, bool)):
++        return value
++    return str(value)
++
++
++def _get_exchange_manager(exchange_name):
++    if exchange_name:
++        normalized_name = str(exchange_name).strip().lower()
++        for manager in interfaces_util.get_exchange_managers():
++            if trading_api.get_exchange_name(manager).strip().lower() == normalized_name:
++                return manager
++        raise KeyError(f"No exchange to be found: {exchange_name}")
++    return models.get_first_exchange_data()[0]
++
++
++def _get_market_ticker(exchange_name, symbol):
++    if not symbol or not str(symbol).strip():
++        raise ValueError("symbol is required")
++    normalized_symbol = str(symbol).strip().replace("|", "/").upper()
++    exchange_manager = _get_exchange_manager(exchange_name)
++    exchange_name = trading_api.get_exchange_name(exchange_manager)
++    exchange_id = trading_api.get_exchange_manager_id(exchange_manager)
++    # Gail uses this route for read-only wider-market discovery.
++    # Allow OctoBot to create the in-memory symbol data object for
++    # an exchange-listed pair that is not yet in the active
++    # watchlist.  Gail still validates the symbol against the
++    # exchange universe and keeps order-side pair activation,
++    # sizing, economics, and live-execution gates separate.
++    symbol_data = trading_api.get_symbol_data(
++        exchange_manager, normalized_symbol, allow_creation=True
++    )
++    mark_price = interfaces_util.run_in_bot_main_loop(
++        symbol_data.prices_manager.get_mark_price(timeout=30), timeout=35
++    )
++    mark_price = decimal.Decimal(str(mark_price))
++    if not mark_price.is_finite() or mark_price <= decimal.Decimal("0"):
++        raise RuntimeError(f"No valid mark price for {exchange_name} {normalized_symbol}")
++    timestamp = exchange_manager.exchange.get_exchange_current_time()
++    return {
++        "exchange": exchange_name,
++        "exchange_id": exchange_id,
++        "symbol": normalized_symbol,
++        "last": mark_price,
++        "close": mark_price,
++        "price": mark_price,
++        "mark_price": mark_price,
++        "timestamp": timestamp,
++    }
+ 
+ def register(blueprint):
++
++    @blueprint.route("/market/ticker", methods=['GET'])
++    @login.login_required_when_activated
++    def market_ticker():
++        try:
++            return flask.jsonify(_json_safe(_get_market_ticker(
++                flask.request.args.get("exchange"),
++                flask.request.args.get("symbol"),
++            )))
++        except (KeyError, ValueError) as err:
++            return util.get_rest_reply(str(err), 404)
++        except Exception as err:
++            return util.get_rest_reply(str(err), 503)
++
++
++    @blueprint.route("/portfolio", methods=['GET'])
++    @login.login_required_when_activated
++    def portfolio():
++        return flask.jsonify(_json_safe(models.get_exchange_holdings_per_symbol()))
++
++
++    @blueprint.route("/logs", methods=['GET'])
++    @login.login_required_when_activated
++    def logs():
++        limit = flask.request.args.get("limit", default=25, type=int)
++        limit = max(1, min(limit, 500))
++        entries = list(web_interface.get_logs())[-limit:]
++        notifications = list(web_interface.get_notifications_history())[-limit:]
++        return flask.jsonify({
++            "logs": _json_safe(entries),
++            "notifications": _json_safe(notifications),
++            "count": len(entries),
++        })
++
+     @blueprint.route("/orders", methods=['GET', 'POST'])
+     @login.login_required_when_activated
+     def orders():

@@ -57,7 +57,7 @@ class StopAutomationActionExecutor(automation_user_action_executor.AutomationUse
 
         stop_payload = _get_stop_automation_payload(user_action)
         actions = _stop_priority_action_dict(user_action=user_action)
-        await scheduler_tasks.send_actions_to_active_automation(
+        await scheduler_tasks.send_stop_actions_to_active_automation(
             stop_payload.id,
             self._user_id,
             actions,
