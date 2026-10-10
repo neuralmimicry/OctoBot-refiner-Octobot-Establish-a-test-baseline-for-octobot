@@ -6,17 +6,15 @@ Subject: [PATCH 40/40] test strict Gail order exchange selection
 Tag: tests
 Ansible task: none (test-only)
 ---
-diff --git a/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_api.py b/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_api.py
-index 05e1a0ef41547de166233f5df31cdab56b1be778..0000000000000000000000000000000000000000 100644
---- a/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_api.py
-+++ b/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_api.py
-@@ -11,3 +11,4 @@
- import octobot.enums
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_order.py b/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_order.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..aaa242a1a4f9242dfc656ad3e23baf68756a9263
+--- /dev/null
++++ b/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_order.py
+@@ -0,0 +1,11 @@
++import pytest
++
 +import tentacles.Services.Interfaces.web_interface.models.trading as trading_model
- import tentacles.Services.Interfaces.web_interface.tests as web_interface_tests
- import tentacles.Services.Interfaces.web_interface.tests.models.distributions.distribution_tester as distribution_tester
-@@ -72,1 +73,9 @@
-                 assert {"name", "exchange", "id", "exchange_id", "enabled", "trading", "symbols"} <= set(entry)
 +
 +
 +def test_gail_orders_reject_missing_exchange_even_with_one_active_manager(monkeypatch):
