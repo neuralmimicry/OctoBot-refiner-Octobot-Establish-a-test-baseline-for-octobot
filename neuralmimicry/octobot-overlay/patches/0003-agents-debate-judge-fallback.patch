@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:26 +0100
+Subject: [PATCH 03/33] agents-debate-judge-fallback
+
+Tag: ai-team
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/tasks/main.yml
+
+Ansible task: Patch OctoBot framework debate judge fallback in source tree
+---
+ .../octobot_agents/team/channels/agents_team.py      | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/packages/agents/octobot_agents/team/channels/agents_team.py b/packages/agents/octobot_agents/team/channels/agents_team.py
+index a8271613dcc64ce8b952d2a3321ee973245a7ccd..4b5b90ed677a4b55b90b673523bb293426e727d4 100644
+--- a/packages/agents/octobot_agents/team/channels/agents_team.py
++++ b/packages/agents/octobot_agents/team/channels/agents_team.py
+@@ -299,8 +299,16 @@ class AbstractAgentsTeamChannelProducer(agent_channels.AbstractAgentChannelProdu
+         and judge_decisions for structured logging.
+         """
+         if self.judge_agent is None:
+-            self.logger.warning("Debate step requires a judge agent but none is configured; skipping debate.")
+-            return results, completed_agents
++            fallback_judge = self._producer_by_name.get("RiskJudgeAIAgentProducer")
++            if fallback_judge is None and hasattr(debate_config, "judge_agent_name"):
++                requested_judge_name = getattr(debate_config, "judge_agent_name", None)
++                if isinstance(requested_judge_name, str) and requested_judge_name.strip():
++                    fallback_judge = self._producer_by_name.get(requested_judge_name.strip())
++            if fallback_judge is not None:
++                self.judge_agent = fallback_judge
++            else:
++                self.logger.warning("Debate step requires a judge agent but none is configured; skipping debate.")
++                return results, completed_agents
+ 
+         debate_history: typing.List[typing.Dict[str, typing.Any]] = []
+         judge_decisions: typing.List[typing.Dict[str, typing.Any]] = []

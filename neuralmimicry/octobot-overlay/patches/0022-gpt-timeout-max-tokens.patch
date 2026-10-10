@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:28 +0100
+Subject: [PATCH 22/33] gpt-timeout-max-tokens
+
+Tag: site
+
+Replaces: swarmhpc continuum_tenant_octobot_site.yml post_tasks
+
+Ansible task: Patch OctoBot GPT service timeout and default max tokens in active tentacles volume
+---
+ .../tentacles/Services/Services_bases/gpt_service/gpt.py    | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/packages/tentacles/Services/Services_bases/gpt_service/gpt.py b/packages/tentacles/Services/Services_bases/gpt_service/gpt.py
+index 55d7e1c8b7f32be80455069b391356167fa24390..9a81190971ae9a352d320d1f26874bc170dc8b9a 100644
+--- a/packages/tentacles/Services/Services_bases/gpt_service/gpt.py
++++ b/packages/tentacles/Services/Services_bases/gpt_service/gpt.py
+@@ -75,7 +75,8 @@ class LLMService(services.AbstractAIService):
+ 
+     DEFAULT_MODEL = "gpt-4o-mini"
+     NO_TOKEN_LIMIT_VALUE = -1
+-    HTTP_TIMEOUT = 300.0  # HTTP client timeout in seconds
++    HTTP_TIMEOUT = float(os.getenv("LANGCHAIN_HTTP_TIMEOUT", "1200"))  # HTTP client timeout in seconds
++
+ 
+     def get_fields_description(self):
+         if self._env_secret_key is None:
+@@ -924,7 +925,8 @@ class LLMService(services.AbstractAIService):
+         self,
+         messages,
+         model=None,
+-        max_tokens=10000,
++        max_tokens=int(os.getenv("OCTOBOT_LLM_MAX_TOKENS_DEFAULT", "16384")),
++
+         n=1,
+         stop=None,
+         temperature=0.5,

@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:21:39 +0100
+Subject: [PATCH 33/33] web-interface-gail-route-tests
+
+Tag: tests
+
+Replaces: (new) test coverage for the Gail API routes; keeps the parameterised /api/market/ticker route out of the parameter-less browse-all-pages crawl; pins OCTOBOT_TENTACLES_TEMP_ROOT to the working directory for the tentacles_manager tests, which use cwd-relative temp dirs (see tentacles-temp-dir)
+
+Ansible task: none (test-only)
+---
+ .../distributions/distribution_tester.py      |  8 ++-
+ .../tests/test_neuralmimicry_gail_api.py      | 72 +++++++++++++++++++
+ packages/tentacles_manager/tests/conftest.py  |  7 ++
+ 3 files changed, 86 insertions(+), 1 deletion(-)
+ create mode 100644 packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_api.py
+
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/tests/models/distributions/distribution_tester.py b/packages/tentacles/Services/Interfaces/web_interface/tests/models/distributions/distribution_tester.py
+index 400b0c1a76c1a6b230a1def9595cb41d63d4802a..e60fb69f728f2afaae7c5b0948a78dd22343e054 100644
+--- a/packages/tentacles/Services/Interfaces/web_interface/tests/models/distributions/distribution_tester.py
++++ b/packages/tentacles/Services/Interfaces/web_interface/tests/models/distributions/distribution_tester.py
+@@ -22,6 +22,9 @@ import octobot.enums
+ 
+ 
+ LOCAL_HOST_URL = "http://localhost:"
++# NeuralMimicry overlay: Gail API routes that require query parameters (they
++# answer 404 without them). Covered by tests/test_neuralmimicry_gail_api.py.
++NEURALMIMICRY_PARAMETERISED_ROUTES = ["/api/market/ticker"]
+ # Page checks use web_interface_tests._aihttp_request (one retry on incomplete payload flake).
+ BROWSE_PAGE_CHECK_MAX_CONCURRENCY = 12
+ BROWSE_CLIENT_CONNECTION_DRAIN_SECONDS = 0.05
+@@ -136,7 +139,10 @@ class AbstractDistributionTester:
+     def _get_all_native_rules(self, web_interface_instance, black_list=None):
+         if black_list is None:
+             black_list = []
+-        full_back_list = self.URL_BLACK_LIST + black_list + web_interface_tests.get_plugins_routes(web_interface_instance)
++        full_back_list = (
++            self.URL_BLACK_LIST + NEURALMIMICRY_PARAMETERISED_ROUTES + black_list
++            + web_interface_tests.get_plugins_routes(web_interface_instance)
++        )
+         rules = set(
+             rule.rule
+             for rule in web_interface_instance.server_instance.url_map.iter_rules()
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_api.py b/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_api.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..05e1a0ef41547de166233f5df31cdab56b1be778
+--- /dev/null
++++ b/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_gail_api.py
+@@ -0,0 +1,72 @@
++#  NeuralMimicry overlay tests for the Gail compatibility API routes.
++#
++#  This library is free software; you can redistribute it and/or
++#  modify it under the terms of the GNU Lesser General Public
++#  License as published by the Free Software Foundation; either
++#  version 3.0 of the License, or (at your option) any later version.
++import json
++
++import pytest
++
++import octobot.enums
++import tentacles.Services.Interfaces.web_interface.tests as web_interface_tests
++import tentacles.Services.Interfaces.web_interface.tests.models.distributions.distribution_tester as distribution_tester
++
++
++pytestmark = pytest.mark.asyncio
++
++DISTRIBUTION = octobot.enums.OctoBotDistribution.DEFAULT
++GAIL_GET_ROUTES = ("/api/market/ticker", "/api/exchanges", "/api/portfolio", "/api/logs", "/api/orders")
++
++
++def _url(web_interface_instance, path):
++    return f"{distribution_tester.LOCAL_HOST_URL}{web_interface_instance.port}{path}"
++
++
++async def test_gail_routes_are_registered_on_the_api_blueprint():
++    async with web_interface_tests.get_web_interface(False, DISTRIBUTION) as web_interface_instance:
++        rules = {
++            rule.rule: rule
++            for rule in web_interface_instance.server_instance.url_map.iter_rules()
++        }
++        for route in GAIL_GET_ROUTES:
++            assert route in rules, route
++            assert "GET" in rules[route].methods, route
++            assert rules[route].endpoint.startswith("api."), (route, rules[route].endpoint)
++        assert "POST" in rules["/api/orders"].methods
++
++
++async def test_market_ticker_requires_login_when_password_is_required():
++    async with web_interface_tests.get_web_interface(True, DISTRIBUTION) as web_interface_instance:
++        async with distribution_tester._distribution_test_client_session() as session:
++            await web_interface_tests.check_page_login_redirect(
++                _url(web_interface_instance, "/api/market/ticker"), session
++            )
++
++
++async def test_market_ticker_rejects_missing_symbol_with_404():
++    async with web_interface_tests.get_web_interface(False, DISTRIBUTION) as web_interface_instance:
++        async with distribution_tester._distribution_test_client_session() as session:
++            async with session.get(_url(web_interface_instance, "/api/market/ticker")) as resp:
++                assert resp.status == 404
++                assert "symbol is required" in await resp.text()
++
++
++async def test_market_ticker_rejects_unknown_exchange_with_404():
++    async with web_interface_tests.get_web_interface(False, DISTRIBUTION) as web_interface_instance:
++        async with distribution_tester._distribution_test_client_session() as session:
++            url = _url(web_interface_instance, "/api/market/ticker?symbol=BTC/USDT&exchange=not-an-exchange")
++            async with session.get(url) as resp:
++                assert resp.status == 404
++                assert "No exchange to be found: not-an-exchange" in await resp.text()
++
++
++async def test_exchanges_inventory_is_a_json_list():
++    async with web_interface_tests.get_web_interface(False, DISTRIBUTION) as web_interface_instance:
++        async with distribution_tester._distribution_test_client_session() as session:
++            async with session.get(_url(web_interface_instance, "/api/exchanges")) as resp:
++                assert resp.status == 200
++                inventory = json.loads(await resp.text())
++                assert isinstance(inventory, list)
++                for entry in inventory:
++                    assert {"name", "exchange", "id", "exchange_id", "enabled", "trading", "symbols"} <= set(entry)
+diff --git a/packages/tentacles_manager/tests/conftest.py b/packages/tentacles_manager/tests/conftest.py
+index 4f39ff7b9edfddf74d62897f2f2eaab47294a6b7..b3ce380e11a935dd0cd17fccc342ddbd10b1f64d 100644
+--- a/packages/tentacles_manager/tests/conftest.py
++++ b/packages/tentacles_manager/tests/conftest.py
+@@ -1,3 +1,10 @@
++import os
++
++# NeuralMimicry overlay: fetch_and_extract_tentacles resolves relative temp dirs
++# under $OCTOBOT_TENTACLES_TEMP_ROOT (default /tmp). These tests use temp dirs
++# relative to the working directory, so resolve them there.
++os.environ.setdefault("OCTOBOT_TENTACLES_TEMP_ROOT", os.curdir)
++
+ import pytest
+ import mock
+ import octobot_tentacles_manager.constants as constants

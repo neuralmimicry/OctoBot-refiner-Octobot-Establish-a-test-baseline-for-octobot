@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:28 +0100
+Subject: [PATCH 18/33] web-portfolio-api-compat
+
+Tag: runtime-init
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/templates/octobot-stack.yaml.j2 (init container apply_ai_team_tentacles_patch)
+
+Ansible task: apply_replacements: web interface portfolio API compatibility
+---
+ .../Services/Interfaces/web_interface/api/trading.py       | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/api/trading.py b/packages/tentacles/Services/Interfaces/web_interface/api/trading.py
+index a0cd7b2e52afd6f10334b735ae6405dc1cbaad26..81e5ef5f3a7960c5c9fbb3ced64f2e889af031c6 100644
+--- a/packages/tentacles/Services/Interfaces/web_interface/api/trading.py
++++ b/packages/tentacles/Services/Interfaces/web_interface/api/trading.py
+@@ -122,6 +122,13 @@ def register(blueprint):
+             "count": len(entries),
+         })
+ 
++    # portfolio_api_route_compatibility
++    @blueprint.route("/portfolio", methods=['GET'])
++    @login.login_required_when_activated
++    def portfolio_api():
++        return flask.jsonify(models.get_exchange_holdings_per_symbol())
++
++
+     @blueprint.route("/orders", methods=['GET', 'POST'])
+     @login.login_required_when_activated
+     def orders():

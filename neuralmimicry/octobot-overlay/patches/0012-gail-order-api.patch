@@ -1,0 +1,268 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:27 +0100
+Subject: [PATCH 12/33] gail-order-api
+
+Tag: build
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/tasks/main.yml + files/gail_order_api_patch.py
+
+Ansible task: Add and validate the Gail direct order API compatibility patch
+---
+ .../Interfaces/web_interface/api/trading.py   |  29 ++-
+ .../web_interface/models/__init__.py          |   5 +
+ .../web_interface/models/trading.py           | 170 ++++++++++++++++++
+ 3 files changed, 202 insertions(+), 2 deletions(-)
+
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/api/trading.py b/packages/tentacles/Services/Interfaces/web_interface/api/trading.py
+index d290745b632b43b7e566b740bf6d32f6877a1c19..a0cd7b2e52afd6f10334b735ae6405dc1cbaad26 100644
+--- a/packages/tentacles/Services/Interfaces/web_interface/api/trading.py
++++ b/packages/tentacles/Services/Interfaces/web_interface/api/trading.py
+@@ -129,9 +129,34 @@ def register(blueprint):
+             return flask.jsonify(models.get_all_orders_data())
+         elif flask.request.method == "POST":
+             result = ""
+-            request_data = flask.request.get_json()
++
++            # GAIL_ORDER_API_COMPATIBILITY_PATCH
++            request_data = flask.request.get_json(silent=True)
+             action = flask.request.args.get("action")
+-            if action == "cancel_order":
++            if action is None and isinstance(request_data, dict):
++                action = request_data.get("action")
++            if action is None:
++                if isinstance(request_data, list):
++                    action = "create_orders"
++                elif isinstance(request_data, dict) and any(
++                    key in request_data for key in ("symbol", "pair", "market", "side", "order_side")
++                ):
++                    action = "create_order"
++            if action == "create_order":
++                try:
++                    result = models.create_order(request_data)
++                except ValueError as err:
++                    return util.get_rest_reply(str(err), 400)
++                except RuntimeError as err:
++                    return util.get_rest_reply(str(err), 500)
++            elif action == "create_orders":
++                try:
++                    result = models.create_orders(request_data)
++                except ValueError as err:
++                    return util.get_rest_reply(str(err), 400)
++                except RuntimeError as err:
++                    return util.get_rest_reply(str(err), 500)
++            elif action == "cancel_order":
+                 if interfaces_util.cancel_orders([request_data]):
+                     result = "Order cancelled"
+                 else:
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/models/__init__.py b/packages/tentacles/Services/Interfaces/web_interface/models/__init__.py
+index 976fa747e546fd2f0371103706eae4c83c6c7aa4..ab010efe082413267eabf237a9d44e05c763620a 100644
+--- a/packages/tentacles/Services/Interfaces/web_interface/models/__init__.py
++++ b/packages/tentacles/Services/Interfaces/web_interface/models/__init__.py
+@@ -275,6 +275,9 @@ from tentacles.Services.Interfaces.web_interface.models.trading import (
+     get_portfolio_historical_values,
+     get_pnl_history_symbols,
+     get_pnl_history,
++    # GAIL_ORDER_API_COMPATIBILITY_PATCH
++    create_order,
++    create_orders,
+     get_all_orders_data,
+     get_all_trades_data,
+     get_all_positions_data,
+@@ -487,6 +490,8 @@ __all__ = [
+     "get_portfolio_historical_values",
+     "get_pnl_history_symbols",
+     "get_pnl_history",
++    "create_order",
++    "create_orders",
+     "get_all_orders_data",
+     "get_all_trades_data",
+     "get_all_positions_data",
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/models/trading.py b/packages/tentacles/Services/Interfaces/web_interface/models/trading.py
+index c6f4412bb4b34481dfdc0fde7a0b3c4aa3353dfc..924e826ecdaaa170fab76205821a4f66fc489abd 100644
+--- a/packages/tentacles/Services/Interfaces/web_interface/models/trading.py
++++ b/packages/tentacles/Services/Interfaces/web_interface/models/trading.py
+@@ -19,6 +19,7 @@ import sortedcontainers
+ 
+ import octobot_services.interfaces.util as interfaces_util
+ import octobot_trading.api as trading_api
++import octobot_trading.personal_data as trading_personal_data
+ import octobot_trading.enums as trading_enums
+ import octobot_trading.errors as trading_errors
+ import octobot_commons.enums as commons_enums
+@@ -392,6 +393,175 @@ def _dump_order(order, is_simulated):
+         return None
+ 
+ 
++
++# GAIL_ORDER_API_COMPATIBILITY_PATCH
++def _resolve_gail_order_exchange_manager(order_description):
++    exchange_id = str(order_description.get("exchange_id") or "").strip()
++    exchange_name = str(
++        order_description.get("exchange")
++        or order_description.get("exchange_name")
++        or ""
++    ).strip()
++    if exchange_id:
++        try:
++            manager = trading_api.get_exchange_manager_from_exchange_id(exchange_id)
++        except KeyError as err:
++            raise ValueError(f"Unknown exchange_id: {exchange_id}") from err
++        if not trading_api.has_trader(manager):
++            raise ValueError(f"Exchange {exchange_id} has no active trader")
++        return manager
++
++    managers = [
++        manager
++        for manager in interfaces_util.get_exchange_managers()
++        if trading_api.has_trader(manager)
++    ]
++    if exchange_name:
++        managers = [
++            manager
++            for manager in managers
++            if trading_api.get_exchange_name(manager).lower() == exchange_name.lower()
++        ]
++    if len(managers) != 1:
++        raise ValueError(
++            f"Expected one exchange manager for {exchange_name or 'the requested order'}, "
++            f"found {len(managers)}"
++        )
++    return managers[0]
++
++
++def _positive_gail_order_decimal(value, field_name):
++    try:
++        parsed = decimal.Decimal(str(value))
++    except (decimal.InvalidOperation, TypeError, ValueError) as err:
++        raise ValueError(f"Invalid {field_name}: {value!r}") from err
++    if not parsed.is_finite() or parsed <= decimal.Decimal("0"):
++        raise ValueError(f"{field_name} must be a positive finite number")
++    return parsed
++
++
++async def _async_create_order_on_exchange(order_description):
++    if not isinstance(order_description, dict):
++        raise ValueError("Order description must be a JSON object")
++
++    exchange_manager = _resolve_gail_order_exchange_manager(order_description)
++    symbol = str(
++        order_description.get("symbol")
++        or order_description.get("pair")
++        or order_description.get("market")
++        or ""
++    ).strip().replace("|", "/").upper()
++    if not symbol:
++        raise ValueError("Order symbol is required")
++
++    side = str(order_description.get("side") or order_description.get("order_side") or "").lower()
++    if side not in ("buy", "sell"):
++        raise ValueError(f"Unsupported order side: {side or '<missing>'}")
++
++    symbol_data = trading_api.get_symbol_data(
++        exchange_manager,
++        symbol,
++        allow_creation=False,
++    )
++    current_price = decimal.Decimal(
++        str(await symbol_data.prices_manager.get_mark_price(timeout=30))
++    )
++    if not current_price.is_finite() or current_price <= decimal.Decimal("0"):
++        raise ValueError(f"No valid current price is available for {symbol}")
++
++    # Gail sends amount_usd and amount as quote-currency notional. Prefer that
++    # explicit field so a USD order is never mistaken for base-asset quantity.
++    requested_quantity = order_description.get("quantity")
++    if requested_quantity is not None:
++        quantity = _positive_gail_order_decimal(requested_quantity, "quantity")
++    else:
++        notional = order_description.get("amount_usd")
++        if notional is None:
++            notional = order_description.get("amount")
++        if notional is None:
++            raise ValueError("Order quantity or amount_usd is required")
++        quantity = _positive_gail_order_decimal(notional, "amount_usd") / current_price
++
++    order_type_name = str(
++        order_description.get("order_type") or order_description.get("type") or "market"
++    ).lower()
++    if "limit" in order_type_name:
++        order_type = (
++            trading_enums.TraderOrderType.BUY_LIMIT
++            if side == "buy"
++            else trading_enums.TraderOrderType.SELL_LIMIT
++        )
++    else:
++        order_type = (
++            trading_enums.TraderOrderType.BUY_MARKET
++            if side == "buy"
++            else trading_enums.TraderOrderType.SELL_MARKET
++        )
++
++    requested_price = order_description.get("price")
++    price = (
++        _positive_gail_order_decimal(requested_price, "price")
++        if requested_price is not None
++        else current_price
++    )
++    symbol_market = exchange_manager.exchange.get_market_status(
++        symbol,
++        with_fixer=False,
++    )
++    adapted_quantity = trading_personal_data.decimal_adapt_quantity(
++        symbol_market,
++        quantity,
++        truncate=True,
++    )
++    if adapted_quantity <= decimal.Decimal("0"):
++        raise ValueError(
++            f"Order quantity became non-positive after market adaptation for {symbol}"
++        )
++    adapted_price = trading_personal_data.decimal_adapt_price(
++        symbol_market,
++        price,
++        truncate=True,
++    )
++    created_order = await trading_api.create_order(
++        exchange_manager=exchange_manager,
++        order_type=order_type,
++        symbol=symbol,
++        current_price=float(current_price),
++        quantity=float(adapted_quantity),
++        price=float(adapted_price),
++        force_if_disabled=True,
++    )
++    if created_order is None:
++        raise RuntimeError("OctoBot did not return the created Gail order")
++
++    result = _dump_order(created_order, False)
++    if not isinstance(result, dict):
++        raise RuntimeError("OctoBot could not serialize the created Gail order")
++    order_id = result.get("id") or result.get("order_id") or result.get("ID")
++    if order_id:
++        result.setdefault("id", order_id)
++        result.setdefault("order_id", order_id)
++    result.setdefault("symbol", symbol)
++    result.setdefault("side", side)
++    result.setdefault("exchange", trading_api.get_exchange_name(exchange_manager))
++    result.setdefault("status", "submitted")
++    return result
++
++
++def create_order(order_description):
++    return interfaces_util.run_in_bot_main_loop(
++        _async_create_order_on_exchange(order_description)
++    )
++
++
++def create_orders(order_descriptions):
++    if isinstance(order_descriptions, dict):
++        order_descriptions = order_descriptions.get("orders", [order_descriptions])
++    if not isinstance(order_descriptions, list) or not order_descriptions:
++        raise ValueError("Orders payload must be a non-empty array or object")
++    return [create_order(order_description) for order_description in order_descriptions]
++
++
+ def get_all_orders_data():
+     return _get_dumped_data(*interfaces_util.get_all_open_orders(), _dump_order)
+ 

@@ -1,0 +1,107 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:28 +0100
+Subject: [PATCH 29/33] critic-quality-payload-coercion
+
+Tag: site
+
+Replaces: swarmhpc continuum_tenant_octobot_site.yml post_tasks
+
+Ansible task: Patch OctoBot AI critic quality payload coercion in active tentacles volume
+---
+ .../default_ai_critic_agent.py                | 68 +++++++++++++++++++
+ 1 file changed, 68 insertions(+)
+
+diff --git a/packages/tentacles/Agent/sub_agents/default_critic_agent/default_ai_critic_agent.py b/packages/tentacles/Agent/sub_agents/default_critic_agent/default_ai_critic_agent.py
+index 6ba10b602716ed48131ba127e3473af0b640e1d5..e62a4cd60b1ba3af72fcea388f400f9ed1940251 100644
+--- a/packages/tentacles/Agent/sub_agents/default_critic_agent/default_ai_critic_agent.py
++++ b/packages/tentacles/Agent/sub_agents/default_critic_agent/default_ai_critic_agent.py
+@@ -13,6 +13,8 @@
+ #
+ #  You should have received a copy of the GNU Lesser General Public
+ #  License along with this library.
++import ast
++import json
+ import typing
+ from typing import List
+ 
+@@ -152,6 +154,71 @@ For each agent with memory enabled:
+         # Reuse the basic quality evaluation from DefaultCriticAgentProducer
+         return self._basic_critic._evaluate_result_quality(output, agent)
+     
++    @staticmethod
++    def _extract_json_object(content: typing.Any) -> typing.Optional[typing.Dict[str, typing.Any]]:
++        if not isinstance(content, str):
++            return None
++        start = content.find("{")
++        end = content.rfind("}")
++        if start == -1 or end <= start:
++            return None
++        candidate = content[start:end + 1].strip()
++        for parser in (json.loads, ast.literal_eval):
++            try:
++                parsed = parser(candidate)
++            except Exception:
++                continue
++            if isinstance(parsed, dict):
++                return parsed
++        return None
++
++    def _coerce_quality_evaluation_payload(self, response_data: typing.Any) -> typing.Dict[str, typing.Any]:
++        if hasattr(response_data, "model_dump"):
++            response_data = response_data.model_dump()
++
++        parsed = None
++        if isinstance(response_data, dict) and isinstance(response_data.get("error"), str):
++            parsed = self._extract_json_object(response_data["error"])
++        elif isinstance(response_data, str):
++            parsed = self._extract_json_object(response_data)
++
++        if isinstance(parsed, dict):
++            response_data = parsed
++
++        if not isinstance(response_data, dict):
++            self.logger.warning(
++                "DefaultAICriticAgentProducer received malformed quality payload; falling back to basic checks"
++            )
++            return {
++                "quality_ok": True,
++                "issues": [],
++                "reasoning": "Structured quality payload unavailable; fell back to basic checks.",
++            }
++
++        payload = dict(response_data)
++        quality_ok = payload.get("quality_ok")
++        if isinstance(quality_ok, str):
++            lowered = quality_ok.strip().lower()
++            if lowered in ("true", "1", "yes"):
++                payload["quality_ok"] = True
++            elif lowered in ("false", "0", "no"):
++                payload["quality_ok"] = False
++            else:
++                payload["quality_ok"] = True
++        elif isinstance(quality_ok, (int, float, bool)):
++            payload["quality_ok"] = bool(quality_ok)
++        else:
++            payload["quality_ok"] = True
++
++        issues = payload.get("issues", [])
++        if isinstance(issues, str):
++            issues = [issues]
++        elif not isinstance(issues, list):
++            issues = []
++        payload["issues"] = [str(issue) for issue in issues if str(issue).strip()]
++        payload["reasoning"] = str(payload.get("reasoning", "") or "")
++        return payload
++
+     async def _evaluate_result_quality_with_llm(
+         self,
+         output: typing.Any,
+@@ -236,6 +303,7 @@ agent's decisions, strategies, or risk management, not its output schema."""
+             )
+             
+             # Parse response using Pydantic model
++            response = self._coerce_quality_evaluation_payload(response)
+             quality_eval = QualityEvaluationOutput.model_validate(response)
+             quality_ok = quality_eval.quality_ok
+             issues.extend(quality_eval.issues)

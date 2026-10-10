@@ -1,0 +1,141 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NeuralMimicry overlay <overlay@neuralmimicry.ai>
+Date: Mon, 5 Oct 2026 10:19:26 +0100
+Subject: [PATCH 08/33] plan-manager-execution-plan-repair
+
+Tag: ai-team
+
+Replaces: swarmhpc roles/continuum_tenant_octobot/tasks/main.yml
+
+Ansible task: Patch OctoBot AI plan manager debate defaults in source tree
+---
+ .../ai_plan_manager_agent.py                  | 86 ++++++++++++++++---
+ 1 file changed, 73 insertions(+), 13 deletions(-)
+
+diff --git a/packages/tentacles/Agent/teams/default_manager_agent/ai_plan_manager_agent.py b/packages/tentacles/Agent/teams/default_manager_agent/ai_plan_manager_agent.py
+index b32e66dacf1ca03f79cbe459a32e7afb28299829..fe81ebc21e3fd344ea38ba0ae24c224fcd4eec80 100644
+--- a/packages/tentacles/Agent/teams/default_manager_agent/ai_plan_manager_agent.py
++++ b/packages/tentacles/Agent/teams/default_manager_agent/ai_plan_manager_agent.py
+@@ -86,33 +86,93 @@ Critical requirements:
+ - agent_name MUST be one of the provided agent names in the context. Do NOT invent new names.
+ - Output ONLY valid JSON matching the ExecutionPlan schema. No markdown or extra text."""
+ 
+-    def _repair_execution_plan(self, response_data: typing.Any) -> typing.Optional[agent_models.ExecutionPlan]:
++    def _repair_execution_plan(
++        self,
++        response_data: typing.Any,
++        allowed_agent_names: typing.Optional[typing.List[str]] = None,
++    ) -> typing.Optional[agent_models.ExecutionPlan]:
++        if isinstance(response_data, dict) and isinstance(response_data.get("error"), str):
++            import ast
++            error_text = response_data["error"]
++            start = error_text.find("{")
++            end = error_text.rfind("}")
++            if start != -1 and end > start:
++                try:
++                    parsed = ast.literal_eval(error_text[start:end + 1])
++                except (SyntaxError, ValueError):
++                    parsed = None
++                if isinstance(parsed, dict):
++                    response_data = parsed
++
+         if not isinstance(response_data, dict):
+             return None
++
++        allowed_agent_names = allowed_agent_names or []
++        allowed = set(allowed_agent_names)
++        allowed_map = {name.lower(): name for name in allowed_agent_names}
++        fallback_agent_name = allowed_agent_names[0] if allowed_agent_names else None
++
+         steps = response_data.get("steps")
+         if not isinstance(steps, list):
+-            return None
++            steps = []
++
+         repaired_steps = []
+         for step in steps:
+             if not isinstance(step, dict):
+                 continue
++            step = dict(step)
+             step_type = step.get("step_type")
+-            agent_name = step.get("agent_name")
+-            if not agent_name and step_type in (None, "agent"):
+-                agent_name = step.get("name") or step.get("agent")
+-                if agent_name:
+-                    step = {**step, "agent_name": agent_name}
+-            if step_type in (None, "agent") and not step.get("agent_name"):
++
++            debate_config = step.get("debate_config")
++            if isinstance(debate_config, dict):
++                debate_config = dict(debate_config)
++                if not isinstance(debate_config.get("debator_agent_names"), list) or not debate_config.get("debator_agent_names"):
++                    debate_config["debator_agent_names"] = ["BullResearchAIAgentProducer", "BearResearchAIAgentProducer"]
++                if not isinstance(debate_config.get("judge_agent_name"), str) or not debate_config.get("judge_agent_name"):
++                    debate_config["judge_agent_name"] = "RiskJudgeAIAgentProducer"
++                if not isinstance(debate_config.get("max_rounds"), int) or debate_config.get("max_rounds", 0) < 1:
++                    debate_config["max_rounds"] = 3
++                step["debate_config"] = debate_config
++
++            if step.get("debate_config") and step_type in (None, "agent"):
++                step["step_type"] = "debate"
++                step.setdefault("agent_name", "debate")
++                repaired_steps.append(step)
+                 continue
++
++            agent_name = step.get("agent_name") or step.get("name") or step.get("agent")
++            if step_type in (None, "agent"):
++                if not agent_name:
++                    agent_name = fallback_agent_name
++                elif allowed and agent_name not in allowed:
++                    normalized = allowed_map.get(str(agent_name).lower())
++                    if normalized is None:
++                        import difflib
++                        matches = difflib.get_close_matches(str(agent_name).lower(), allowed_map.keys(), n=1, cutoff=0.6)
++                        normalized = allowed_map[matches[0]] if matches else fallback_agent_name
++                    agent_name = normalized
++                if not agent_name:
++                    continue
++                step["agent_name"] = agent_name
+             repaired_steps.append(step)
++
++        if not repaired_steps and fallback_agent_name:
++            repaired_steps.append({"step_type": "agent", "agent_name": fallback_agent_name})
++
+         if not repaired_steps:
+             return None
++
+         repaired = {**response_data, "steps": repaired_steps}
+         try:
+-            return agent_models.ExecutionPlan.model_validate(repaired)
+-        except pydantic.ValidationError:
++            plan = agent_models.ExecutionPlan.model_validate(repaired)
++            if allowed_agent_names:
++                return agent_models.ExecutionPlan.model_validate_with_agent_names(
++                    plan.model_dump(),
++                    allowed_agent_names,
++                )
++            return plan
++        except (pydantic.ValidationError, ValueError):
+             return None
+-    
+     async def execute(
+         self,
+         input_data: typing.Union[agent_models.ManagerInput, typing.Dict[str, typing.Any]],
+@@ -191,7 +251,7 @@ CRITICAL: agent_name MUST be exactly one of the provided agent names. Do NOT inv
+                 allowed_agent_names,
+             )
+         except (pydantic.ValidationError, ValueError) as e:
+-            repaired = self._repair_execution_plan(response_data)
++            repaired = self._repair_execution_plan(response_data, allowed_agent_names)
+             if repaired is not None:
+                 self.logger.warning("Recovered invalid execution plan by repairing steps.")
+                 return repaired
+@@ -224,7 +284,7 @@ Create an execution plan. Use agent steps (step_type "agent" or omit) for single
+                     allowed_agent_names,
+                 )
+             except (pydantic.ValidationError, ValueError):
+-                repaired = self._repair_execution_plan(response_data)
++                repaired = self._repair_execution_plan(response_data, allowed_agent_names)
+                 if repaired is not None:
+                     self.logger.warning("Recovered invalid execution plan by repairing steps after retry.")
+                     return repaired
