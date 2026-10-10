@@ -53,6 +53,20 @@ jobs:
         arch: [ x64 ]
         version: [ "3.13.x" ]
     steps:
+      - name: Set up checksum-pinned Git LFS
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+            --output "$archive"
+          echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/git-lfs"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+          git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+          test -n "$git_lfs_bin"
+          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          "$git_lfs_bin" version
       - uses: actions/checkout@v6
 
       - name: Apply NeuralMimicry overlay
@@ -129,6 +143,21 @@ jobs:
       USES_TENTACLES: ${{ matrix.package == 'octobot' || matrix.package == 'packages/node' || matrix.package == 'packages/flow' || matrix.package == 'packages/copy' }}
 
     steps:
+    - name: Set up checksum-pinned Git LFS
+      run: |
+        set -euo pipefail
+        archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+        curl --fail --location --retry 3 \
+          https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+          --output "$archive"
+        echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+        mkdir -p "$RUNNER_TEMP/git-lfs"
+        tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+        git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+        test -n "$git_lfs_bin"
+        echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+        "$git_lfs_bin" version
+
     - uses: actions/checkout@v6
 
     - name: Apply NeuralMimicry overlay
@@ -270,6 +299,21 @@ jobs:
         os: [ ubuntu-latest ]
 
     steps:
+      - name: Set up checksum-pinned Git LFS
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+            --output "$archive"
+          echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/git-lfs"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+          git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+          test -n "$git_lfs_bin"
+          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          "$git_lfs_bin" version
+
       - uses: actions/checkout@v6
 
       - name: Apply NeuralMimicry overlay
@@ -400,6 +444,21 @@ jobs:
         version: [ "3.13.x" ]
 
     steps:
+      - name: Set up checksum-pinned Git LFS
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+            --output "$archive"
+          echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/git-lfs"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+          git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+          test -n "$git_lfs_bin"
+          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          "$git_lfs_bin" version
+
       - uses: actions/checkout@v6
 
       - name: Apply NeuralMimicry overlay
@@ -569,6 +628,21 @@ jobs:
       id-token: write   # required for npm trusted publishing (OIDC, no token needed)
 
     steps:
+      - name: Set up checksum-pinned Git LFS
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+            --output "$archive"
+          echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/git-lfs"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+          git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+          test -n "$git_lfs_bin"
+          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          "$git_lfs_bin" version
+
       - uses: actions/checkout@v6
 
       - name: Apply NeuralMimicry overlay
@@ -621,6 +695,21 @@ jobs:
         version: [ "3.13.x" ]
 
     steps:
+      - name: Set up checksum-pinned Git LFS
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+            --output "$archive"
+          echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/git-lfs"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+          git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+          test -n "$git_lfs_bin"
+          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          "$git_lfs_bin" version
+
       - uses: actions/checkout@v6
 
       - name: Apply NeuralMimicry overlay
@@ -662,6 +751,22 @@ jobs:
             runs_on: '["windows-latest"]'
 
     steps:
+    - name: Set up checksum-pinned Git LFS
+      if: runner.os == 'Linux'
+      run: |
+        set -euo pipefail
+        archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+        curl --fail --location --retry 3 \
+          https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+          --output "$archive"
+        echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+        mkdir -p "$RUNNER_TEMP/git-lfs"
+        tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
+        git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
+        test -n "$git_lfs_bin"
+        echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+        "$git_lfs_bin" version
+
     - uses: actions/checkout@v6
 
     - name: Download wheel artifact
