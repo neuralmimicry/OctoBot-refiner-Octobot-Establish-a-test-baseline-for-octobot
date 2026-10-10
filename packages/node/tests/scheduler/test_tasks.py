@@ -229,6 +229,96 @@ class TestSendToActiveAutomationWorkflow:
         assert payload.actions_details == actions
 
     @pytest.mark.asyncio
+    async def test_stop_action_follows_child_handoffs_until_terminal_output_confirms_stop(self):
+        parent_id = self._TEST_PARENT_AUTOMATION_ID
+        child_one = f"{parent_id}_1"
+        child_two = f"{parent_id}_2"
+        actions = [{"id": "action_stop_priority_ua-stop", "dsl_script": "stop_automation()"}]
+        stopped_workflow = mock.Mock()
+        stopped_workflow.output = json.dumps({
+            "state": json.dumps({
+                "state": {
+                    "automation": {
+                        "post_actions": {"stop_automation": True},
+                    },
+                },
+            }),
+            "error": None,
+        })
+        mock_dbos_instance = mock.Mock()
+        mock_dbos_instance.send_async = mock.AsyncMock()
+        resolve_active = mock.AsyncMock(side_effect=[[child_one], [child_two], []])
+        resolve_terminal = mock.AsyncMock(return_value=stopped_workflow)
+        with (
+            mock.patch("octobot_node.scheduler.is_initialized", return_value=True),
+            mock.patch.object(scheduler_module.SCHEDULER, "INSTANCE", mock_dbos_instance),
+            mock.patch.object(
+                scheduler_module.SCHEDULER,
+                "resolve_active_automation_workflow_ids_for_parent_id",
+                resolve_active,
+            ),
+            mock.patch.object(
+                scheduler_module.SCHEDULER,
+                "resolve_latest_terminal_automation_workflow_for_parent_id",
+                resolve_terminal,
+            ),
+            mock.patch(
+                "octobot_node.scheduler.tasks.asyncio.sleep",
+                new_callable=mock.AsyncMock,
+            ),
+        ):
+            await octobot_node.scheduler.tasks.send_stop_actions_to_active_automation(
+                parent_id,
+                self._TEST_WALLET_ADDRESS,
+                actions,
+            )
+
+        assert mock_dbos_instance.send_async.await_count == 2
+        targets = [call.args[0] for call in mock_dbos_instance.send_async.await_args_list]
+        assert targets == [child_one, child_two]
+        for call in mock_dbos_instance.send_async.await_args_list:
+            payload = workflow_params_module.AutomationWorkflowActionUpdate.from_dict(call.args[1])
+            assert payload.actions_details == actions
+        resolve_terminal.assert_awaited_once_with(self._TEST_WALLET_ADDRESS, parent_id)
+
+    @pytest.mark.asyncio
+    async def test_stop_action_fails_if_no_terminal_stop_state_is_confirmed(self):
+        parent_id = self._TEST_PARENT_AUTOMATION_ID
+        child_id = f"{parent_id}_1"
+        mock_dbos_instance = mock.Mock()
+        mock_dbos_instance.send_async = mock.AsyncMock()
+        with (
+            mock.patch("octobot_node.scheduler.is_initialized", return_value=True),
+            mock.patch.object(scheduler_module.SCHEDULER, "INSTANCE", mock_dbos_instance),
+            mock.patch.object(
+                scheduler_module.SCHEDULER,
+                "resolve_active_automation_workflow_ids_for_parent_id",
+                new_callable=mock.AsyncMock,
+                return_value=[child_id],
+            ),
+            mock.patch(
+                "octobot_node.scheduler.tasks.node_constants.AUTOMATION_STOP_CONFIRMATION_TIMEOUT_SECONDS",
+                0.5,
+            ),
+            mock.patch(
+                "octobot_node.scheduler.tasks.time.monotonic",
+                side_effect=[0.0, 1.0],
+            ),
+            mock.patch(
+                "octobot_node.scheduler.tasks.asyncio.sleep",
+                new_callable=mock.AsyncMock,
+            ),
+        ):
+            with pytest.raises(node_errors.AutomationStopConfirmationTimeoutError):
+                await octobot_node.scheduler.tasks.send_stop_actions_to_active_automation(
+                    parent_id,
+                    self._TEST_WALLET_ADDRESS,
+                    [{"id": "action_stop_priority_ua-stop", "dsl_script": "stop_automation()"}],
+                )
+
+        mock_dbos_instance.send_async.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_send_forced_trigger_to_active_automation_sends_forced_trigger_payload(self):
         mock_dbos_instance = mock.Mock()
         mock_dbos_instance.send_async = mock.AsyncMock()

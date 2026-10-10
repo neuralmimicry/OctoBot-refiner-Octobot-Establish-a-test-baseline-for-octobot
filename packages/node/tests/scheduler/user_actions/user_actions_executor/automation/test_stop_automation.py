@@ -76,7 +76,7 @@ class TestStopAutomationActionExecutor:
                 return_value=True,
             ),
             mock.patch(
-                "octobot_node.scheduler.user_actions.user_actions_executor.automation.stop_automation.scheduler_tasks.send_actions_to_active_automation",
+                "octobot_node.scheduler.user_actions.user_actions_executor.automation.stop_automation.scheduler_tasks.send_stop_actions_to_active_automation",
                 new_callable=mock.AsyncMock,
             ) as send_actions_mock,
         ):
@@ -109,7 +109,7 @@ class TestStopAutomationActionExecutor:
                 return_value=True,
             ),
             mock.patch(
-                "octobot_node.scheduler.user_actions.user_actions_executor.automation.stop_automation.scheduler_tasks.send_actions_to_active_automation",
+                "octobot_node.scheduler.user_actions.user_actions_executor.automation.stop_automation.scheduler_tasks.send_stop_actions_to_active_automation",
                 new_callable=mock.AsyncMock,
                 side_effect=node_errors.ActiveAutomationWorkflowNotFoundError("no-match"),
             ),

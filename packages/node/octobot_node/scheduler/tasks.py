@@ -175,6 +175,71 @@ async def send_actions_to_active_automation(
     )
 
 
+def _terminal_workflow_confirms_stop(workflow_status: typing.Any) -> bool:
+    workflow_output = workflows_util.parse_automation_workflow_output(workflow_status)
+    if workflow_output is None or workflow_output.error or not workflow_output.state:
+        return False
+    try:
+        state = workflows_util.get_automation_dict(workflow_output.state)["state"]
+        automation = state["automation"]
+    except (KeyError, TypeError, ValueError):
+        return False
+    return bool(automation.get("post_actions", {}).get("stop_automation"))
+
+
+async def send_stop_actions_to_active_automation(
+    parent_automation_id: str,
+    wallet_address: str,
+    actions: list[dict],
+) -> None:
+    """Retry a stop update across child-workflow hand-offs until persisted state confirms it."""
+    import octobot_node.scheduler  # avoid circular import
+    if not octobot_node.scheduler.is_initialized():
+        raise RuntimeError("Scheduler is not initialized")
+
+    scheduler = octobot_node.scheduler.SCHEDULER
+    started_at = time.monotonic()
+    deadline = started_at + node_constants.AUTOMATION_STOP_CONFIRMATION_TIMEOUT_SECONDS
+    no_initial_workflow_deadline = started_at + node_constants.AUTOMATION_WORKFLOW_ACTIVE_SEND_RETRY_SECONDS
+    sent_to: set[str] = set()
+    last_target = "none"
+    while True:
+        active_workflow_ids = await scheduler.resolve_active_automation_workflow_ids_for_parent_id(
+            wallet_address,
+            parent_automation_id,
+        )
+        if active_workflow_ids:
+            target_workflow_id = active_workflow_ids[0]
+            if target_workflow_id not in sent_to:
+                await _send_automation_workflow_action_update(
+                    target_workflow_id,
+                    octobot_node.enums.AutomationWorkflowActionTypes.USER_ACTIONS.value,
+                    actions,
+                )
+                sent_to.add(target_workflow_id)
+                last_target = target_workflow_id
+        elif sent_to:
+            terminal_workflow = await scheduler.resolve_latest_terminal_automation_workflow_for_parent_id(
+                wallet_address,
+                parent_automation_id,
+            )
+            if terminal_workflow is not None and _terminal_workflow_confirms_stop(terminal_workflow):
+                return
+        elif time.monotonic() >= no_initial_workflow_deadline:
+            raise node_errors.ActiveAutomationWorkflowNotFoundError(
+                f"No active automation workflow for parent id {parent_automation_id!r} "
+                f"(wallet_address={wallet_address!r})."
+            )
+
+        if time.monotonic() >= deadline:
+            raise node_errors.AutomationStopConfirmationTimeoutError(
+                f"Stop update for automation {parent_automation_id!r} was sent to "
+                f"{len(sent_to)} workflow(s), last target {last_target!r}, but no terminal "
+                "stop state was confirmed before the deadline."
+            )
+        await asyncio.sleep(node_constants.AUTOMATION_STOP_CONFIRMATION_POLL_INTERVAL_SECONDS)
+
+
 async def send_forced_trigger_to_active_automation(
     parent_automation_id: str,
     wallet_address: str,
