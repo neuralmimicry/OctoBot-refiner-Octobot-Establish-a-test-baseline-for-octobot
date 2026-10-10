@@ -23,5 +23,10 @@ else
     fi
 fi
 
+# The test image may also contain a tentacles package in site-packages. Import
+# the mounted tree generated from this checkout first so tests exercise the
+# exact patched source used by the image build.
+export PYTHONPATH="/octobot${PYTHONPATH:+:$PYTHONPATH}"
+
 # run tests
 pytest -rw --ignore=tentacles/Trading/Exchange tests tentacles
