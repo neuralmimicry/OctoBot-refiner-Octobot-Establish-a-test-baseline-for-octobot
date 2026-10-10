@@ -43,3 +43,4 @@ patches/0034-deterministic-updater-api-test.patch tests
 patches/0035-web-interface-gail-route-tests-modern-layout.patch tests modern-web-tests
 patches/0036-backtesting-pylint-database-exports.patch tests
 patches/0037-commons-html-content-type-guard.patch build
+patches/0038-backtesting-route-response-guard.patch site
