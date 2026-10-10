@@ -429,10 +429,31 @@ jobs:
           elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             tags+=("${LATEST}" "${STABLE}" "${VERSION}")
           fi
+          # Keep an exact-source tag for every published image. The deployment
+          # consumes the digest recorded for this tag, never a moving channel.
+          immutable_tag="sha-${SHA}"
+          tags+=("${immutable_tag}")
           for tag in "${tags[@]}"; do
             podman tag "${IMAGE}:${SHA}" "${IMAGE}:${tag}"
-            podman push "${IMAGE}:${tag}"
+            if [[ "${tag}" == "${immutable_tag}" ]]; then
+              podman push --digestfile "${RUNNER_TEMP}/octobot-image.digest" "${IMAGE}:${tag}"
+            else
+              podman push "${IMAGE}:${tag}"
+            fi
           done
+          digest="$(cat "${RUNNER_TEMP}/octobot-image.digest")"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          image_ref="${IMAGE}@${digest}"
+          printf '%s\n' "${image_ref}" > "${RUNNER_TEMP}/octobot-image-reference.txt"
+          printf 'Runner-built image: `%s`\n' "${image_ref}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Retain the immutable image reference
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v7
+        with:
+          name: octobot-image-reference-${{ github.sha }}
+          path: ${{ runner.temp }}/octobot-image-reference.txt
+          if-no-files-found: error
 
   tentacles:
     needs: [ build, tests, publish-npm ]
