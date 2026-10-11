@@ -440,10 +440,11 @@ jobs:
             --name "${CONTAINER_NAME}" "${IMAGE}:${SHA}"
           sleep "${WAIT_CONTAINER_TIME}"
           podman logs "${CONTAINER_NAME}"
-          health_status="$(podman inspect \
-            --format '{{.State.Health.Status}}' \
+          container_status="$(podman inspect \
+            --format '{{.State.Status}}' \
             "${CONTAINER_NAME}")"
-          test "$health_status" = healthy
+          test "$container_status" = running
+          podman healthcheck run "${CONTAINER_NAME}"
           test -s "${runtime_tentacles}/.swarmhpc-baked-id"
           test "$(cat "${runtime_tentacles}/.swarmhpc-baked-count")" -gt 0
 

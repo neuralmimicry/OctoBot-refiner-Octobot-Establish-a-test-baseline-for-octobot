@@ -85,6 +85,7 @@ EXPOSE 8000
 EXPOSE 5001-5010
 
 HEALTHCHECK --interval=15s --timeout=10s --retries=5 \
-    CMD curl -sS http://127.0.0.1:5001 || exit 1
+    CMD curl --fail --silent --show-error --max-time 5 \
+        http://127.0.0.1:5001/ >/dev/null
 
 ENTRYPOINT ["./docker-entrypoint.sh"]
