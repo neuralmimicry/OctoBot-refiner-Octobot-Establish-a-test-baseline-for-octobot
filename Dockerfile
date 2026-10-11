@@ -33,12 +33,14 @@ FROM python:3.13-slim-trixie
 
 ARG TENTACLES_URL_TAG=""
 ARG VERSION=""
+ARG SOURCE_REPOSITORY=""
 ENV TENTACLES_URL_TAG=$TENTACLES_URL_TAG
 ENV VERSION=$VERSION
 
 LABEL maintainer="Drakkar-Software" \
       version="${VERSION}" \
-      description="OctoBot - Cryptocurrency trading bot"
+      description="OctoBot - Cryptocurrency trading bot" \
+      org.opencontainers.image.source="${SOURCE_REPOSITORY}"
 
 WORKDIR /octobot
 

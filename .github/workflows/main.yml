@@ -364,12 +364,6 @@ jobs:
           echo "VIRTUAL_ENV=$octobot_venv" >> "$GITHUB_ENV"
           echo "PIP_REQUIRE_VIRTUALENV=true" >> "$GITHUB_ENV"
 
-      - name: Login to GitHub Container Registry
-        if: github.event_name == 'push'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GITHUB_TOKEN" | podman login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-
       - name: Download build wheel artifact
         uses: actions/download-artifact@v8
         with:
@@ -400,17 +394,18 @@ jobs:
         run: >-
           podman build --platform linux/amd64 --tag "${IMAGE}:${SHA}"
           --build-arg TENTACLES_URL_TAG="${TENTACLES_URL_TAG}"
-          --build-arg VERSION="${VERSION}" .
+          --build-arg VERSION="${VERSION}"
+          --build-arg SOURCE_REPOSITORY="https://github.com/${GITHUB_REPOSITORY}" .
 
       - name: Build test container
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
         run: |
           podman build --platform linux/amd64 -f ./tests/Dockerfile \
             --build-arg OCTOBOT_IMAGE="${IMAGE}:${SHA}" \
             --tag "${IMAGE}:${TEST}" .
 
       - name: Run backtesting route acceptance tests
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
         run: |
           route_tests=tentacles/Services/Interfaces/web_interface/tests
           podman run --rm -i \
@@ -419,26 +414,41 @@ jobs:
             "${IMAGE}:${TEST}"
 
       - name: Run container tests
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
         run: |
           podman run --rm -i -e DISABLE_SENTRY=True "${IMAGE}:${TEST}"
 
       - name: Start and check container health
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
         run: |
           set -euo pipefail
-          cleanup() { podman rm --force "${CONTAINER_NAME}" >/dev/null 2>&1 || true; }
+          runtime_tentacles="$(mktemp -d "$RUNNER_TEMP/octobot-runtime-tentacles.XXXXXX")"
+          cleanup() {
+            podman rm --force "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+            rm -rf "$runtime_tentacles"
+          }
           trap cleanup EXIT
-          podman run --detach --env DISABLE_SENTRY=True \
+          podman run --detach --volume "${runtime_tentacles}:/octobot/tentacles:Z" \
+            --env DISABLE_SENTRY=True \
             --name "${CONTAINER_NAME}" "${IMAGE}:${SHA}"
           sleep "${WAIT_CONTAINER_TIME}"
           podman logs "${CONTAINER_NAME}"
           test "$(podman inspect --format '{{.State.Health.Status}}' "${CONTAINER_NAME}")" = healthy
+          test -s "${runtime_tentacles}/.swarmhpc-baked-id"
+          test "$(cat "${runtime_tentacles}/.swarmhpc-baked-count")" -gt 0
 
       - name: Push release image tags
         if: github.event_name == 'push'
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GHCR_BOOTSTRAP_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          auth_file="${RUNNER_TEMP}/octobot-registry-auth.json"
+          trap 'rm -f "$auth_file"' EXIT
+          test -n "$REGISTRY_TOKEN"
+          printf '%s' "$REGISTRY_TOKEN" | podman login \
+            --authfile "$auth_file" --username "$GITHUB_ACTOR" \
+            --password-stdin ghcr.io
           tags=()
           if [[ "${GITHUB_REF}" == "refs/heads/dev" ]]; then
             tags+=("${LATEST}")
@@ -454,9 +464,10 @@ jobs:
           for tag in "${tags[@]}"; do
             podman tag "${IMAGE}:${SHA}" "${IMAGE}:${tag}"
             if [[ "${tag}" == "${immutable_tag}" ]]; then
-              podman push --digestfile "${RUNNER_TEMP}/octobot-image.digest" "${IMAGE}:${tag}"
+              podman push --authfile "$auth_file" \
+                --digestfile "${RUNNER_TEMP}/octobot-image.digest" "${IMAGE}:${tag}"
             else
-              podman push "${IMAGE}:${tag}"
+              podman push --authfile "$auth_file" "${IMAGE}:${tag}"
             fi
           done
           digest="$(cat "${RUNNER_TEMP}/octobot-image.digest")"
