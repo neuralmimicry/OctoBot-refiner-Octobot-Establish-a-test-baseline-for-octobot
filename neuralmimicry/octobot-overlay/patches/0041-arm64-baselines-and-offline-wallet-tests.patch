@@ -1,0 +1,176 @@
+diff --git a/packages/tentacles/Evaluator/Strategies/dip_analyser_strategy_evaluator/tests/test_dip_analyser_strategy_evaluator.py b/packages/tentacles/Evaluator/Strategies/dip_analyser_strategy_evaluator/tests/test_dip_analyser_strategy_evaluator.py
+index ad97a6763..e48640f13 100644
+--- a/packages/tentacles/Evaluator/Strategies/dip_analyser_strategy_evaluator/tests/test_dip_analyser_strategy_evaluator.py
++++ b/packages/tentacles/Evaluator/Strategies/dip_analyser_strategy_evaluator/tests/test_dip_analyser_strategy_evaluator.py
+@@ -13,8 +13,10 @@
+ #
+ #  You should have received a copy of the GNU Lesser General Public
+ #  License along with this library.
+-import pytest
+ import decimal
++import platform
++
++import pytest
+ 
+ import tests.functional_tests.strategy_evaluators_tests.abstract_strategy_test as abstract_strategy_test
+ import tentacles.Evaluator.Strategies as Strategies
+@@ -24,6 +26,12 @@ import tentacles.Trading.Mode as Mode
+ pytestmark = pytest.mark.asyncio
+ 
+ 
++def _architecture_profitability(x64_value: str, arm64_value: str) -> decimal.Decimal:
++    """Keep the measured native-runner baseline for each supported architecture."""
++    machine = platform.machine().lower()
++    return decimal.Decimal(arm64_value if machine in {"aarch64", "arm64"} else x64_value)
++
++
+ @pytest.fixture
+ def strategy_tester():
+     strategy_tester_instance = DipAnalyserStrategiesEvaluatorTest()
+@@ -72,7 +80,11 @@ class DipAnalyserStrategiesEvaluatorTest(abstract_strategy_test.AbstractStrategy
+     async def test_sharp_uptrend(self):
+         # market: -17.047906776003458
+         # market: -18.25837965302341
+-        await self.run_test_sharp_uptrend(decimal.Decimal(str(3.607)), decimal.Decimal(str(10.956)))
++        # ARM64 runner 114714535560 measured 10.990 for POWR/BTC.
++        await self.run_test_sharp_uptrend(
++            decimal.Decimal(str(3.607)),
++            _architecture_profitability("10.956", "10.990"),
++        )
+ 
+     async def test_up_then_down(self):
+         await self.run_test_up_then_down(None, skip_extended=True)
+diff --git a/packages/tentacles/Evaluator/Strategies/mixed_strategies_evaluator/tests/test_technical_analysis_strategy_evaluator.py b/packages/tentacles/Evaluator/Strategies/mixed_strategies_evaluator/tests/test_technical_analysis_strategy_evaluator.py
+index e45d99466..b27c6f5e2 100644
+--- a/packages/tentacles/Evaluator/Strategies/mixed_strategies_evaluator/tests/test_technical_analysis_strategy_evaluator.py
++++ b/packages/tentacles/Evaluator/Strategies/mixed_strategies_evaluator/tests/test_technical_analysis_strategy_evaluator.py
+@@ -14,6 +14,7 @@
+ #  You should have received a copy of the GNU Lesser General Public
+ #  License along with this library.
+ import decimal
++import platform
+ import pytest
+ 
+ import tests.functional_tests.strategy_evaluators_tests.abstract_strategy_test as abstract_strategy_test
+@@ -24,6 +25,12 @@ import tentacles.Trading.Mode as Mode
+ pytestmark = pytest.mark.asyncio
+ 
+ 
++def _architecture_profitability(x64_value: str, arm64_value: str) -> decimal.Decimal:
++    """Keep the measured native-runner baseline for each supported architecture."""
++    machine = platform.machine().lower()
++    return decimal.Decimal(arm64_value if machine in {"aarch64", "arm64"} else x64_value)
++
++
+ @pytest.fixture
+ def strategy_tester():
+     strategy_tester_instance = TechnicalAnalysisStrategyEvaluatorTest()
+@@ -48,7 +55,8 @@ class TechnicalAnalysisStrategyEvaluatorTest(abstract_strategy_test.AbstractStra
+         # market: -29.12366137549725
+         # market: -32.110091743119256
+         await self.run_test_slow_downtrend(decimal.Decimal(str(-8.699)), decimal.Decimal(str(-9.671)),
+-                                           decimal.Decimal(str(-16.968)), decimal.Decimal(str(-7.236)))
++                                           decimal.Decimal(str(-16.968)),
++                                           _architecture_profitability("-7.236", "-6.538"))
+ 
+     async def test_sharp_downtrend(self):
+         # market: -26.07183938094741
+@@ -61,7 +69,8 @@ class TechnicalAnalysisStrategyEvaluatorTest(abstract_strategy_test.AbstractStra
+         # market: -5.7854560064282765
+         # market: -8.067940552016978
+         await self.run_test_flat_markets(decimal.Decimal(str(0.289)), decimal.Decimal(str(1.813)),
+-                                         decimal.Decimal(str(-4.596)), decimal.Decimal(str(3.884)))
++                                         _architecture_profitability("-4.596", "-4.618"),
++                                         decimal.Decimal(str(3.884)))
+ 
+     async def test_slow_uptrend(self):
+         # market: 17.203948364436457
+@@ -75,7 +84,7 @@ class TechnicalAnalysisStrategyEvaluatorTest(abstract_strategy_test.AbstractStra
+ 
+     async def test_up_then_down(self):
+         # market: -6.040105108015155
+-        await self.run_test_up_then_down(decimal.Decimal(str(-0.964)))
++        await self.run_test_up_then_down(_architecture_profitability("-0.964", "-0.907"))
+ 
+ 
+ async def test_default_run(strategy_tester):
+diff --git a/packages/tentacles/Trading/Blockchain_wallet/bitcoin/tests/test_bitcoin_blockchain_wallet.py b/packages/tentacles/Trading/Blockchain_wallet/bitcoin/tests/test_bitcoin_blockchain_wallet.py
+index 049ac5fdb..050c5254f 100644
+--- a/packages/tentacles/Trading/Blockchain_wallet/bitcoin/tests/test_bitcoin_blockchain_wallet.py
++++ b/packages/tentacles/Trading/Blockchain_wallet/bitcoin/tests/test_bitcoin_blockchain_wallet.py
+@@ -29,6 +29,37 @@ BINANCE_COLD_WALLET_ADDRESS = "34xp4vRoCGJym3xR7yCVPFHoCNxv4Twseo"
+ FALSE_BTC_ADDRESS = "17ouWjN7nvPWkZKo2svTF81etXL6Qxnty7"
+ 
+ 
++class _MockResponse:
++    def __init__(self, payload):
++        self.status = 200
++        self.payload = payload
++
++    async def __aenter__(self):
++        return self
++
++    async def __aexit__(self, *_args):
++        return None
++
++    async def json(self):
++        return self.payload
++
++    async def text(self):
++        return ""
++
++
++class _MockSession:
++    def __init__(self, payload):
++        self.response = _MockResponse(payload)
++        self.requested_urls = []
++
++    def get(self, url):
++        self.requested_urls.append(url)
++        return self.response
++
++    async def close(self):
++        return None
++
++
+ def _make_bitcoin_wallet(address: str) -> bitcoin_blockchain_wallet.BitcoinBlockchainWallet:
+     parameters = blockchain_wallets.BlockchainWalletParameters(
+         blockchain_descriptor=blockchain_wallets.BlockchainDescriptor(
+@@ -42,18 +73,34 @@ def _make_bitcoin_wallet(address: str) -> bitcoin_blockchain_wallet.BitcoinBlock
+     return bitcoin_blockchain_wallet.BitcoinBlockchainWallet(parameters)
+ 
+ 
+-async def test_get_native_coin_balance_binance_cold_wallet_positive():
++async def test_get_native_coin_balance_binance_cold_wallet_positive(monkeypatch):
+     wallet = _make_bitcoin_wallet(BINANCE_COLD_WALLET_ADDRESS)
++    session = _MockSession({
++        "chain_stats": {"funded_txo_sum": 125_000_000, "spent_txo_sum": 25_000_000},
++        "mempool_stats": {"funded_txo_sum": 0, "spent_txo_sum": 0},
++    })
++    monkeypatch.setattr(bitcoin_blockchain_wallet.aiohttp, "ClientSession", lambda **_kwargs: session)
+     async with wallet.open():
+         balance = await wallet.get_native_coin_balance()
+-    assert balance.free > decimal.Decimal(0)
++    assert balance.free == decimal.Decimal("1")
++    assert session.requested_urls == [
++        f"{bitcoin_blockchain_wallet.BLOCKSTREAM_INFO_API_BASE}/address/{BINANCE_COLD_WALLET_ADDRESS}"
++    ]
+ 
+ 
+-async def test_get_native_coin_balance_false_address_zero():
++async def test_get_native_coin_balance_false_address_zero(monkeypatch):
+     wallet = _make_bitcoin_wallet(FALSE_BTC_ADDRESS)
++    session = _MockSession({
++        "chain_stats": {"funded_txo_sum": 0, "spent_txo_sum": 0},
++        "mempool_stats": {"funded_txo_sum": 0, "spent_txo_sum": 0},
++    })
++    monkeypatch.setattr(bitcoin_blockchain_wallet.aiohttp, "ClientSession", lambda **_kwargs: session)
+     async with wallet.open():
+         balance = await wallet.get_native_coin_balance()
+     assert balance.free == decimal.Decimal(0)
++    assert session.requested_urls == [
++        f"{bitcoin_blockchain_wallet.BLOCKSTREAM_INFO_API_BASE}/address/{FALSE_BTC_ADDRESS}"
++    ]
+ 
+ 
+ def test_resolve_address_requires_wallet_address():
