@@ -31,7 +31,10 @@ from tests.scheduler import temp_dbos_scheduler
 _T_ENQUEUE_SECONDS = 5.0
 _T_DCA_SECONDS = 30.0
 _T_SIGNAL_SECONDS = 10.0
-_T_STOP_SEND_SECONDS = 5.0
+# Stopping waits for the automation workflow to persist and confirm its terminal
+# state. The scheduler allows up to 90 seconds for that bounded hand-off; keep
+# this integration-test deadline generous enough for the full stop workflow on CI.
+_T_STOP_SEND_SECONDS = 90.0
 _T_STOP_COMPLETE_SECONDS = 15.0
 _POST_STOP_PROTOCOL_POLL_SECONDS = 0.05
 
