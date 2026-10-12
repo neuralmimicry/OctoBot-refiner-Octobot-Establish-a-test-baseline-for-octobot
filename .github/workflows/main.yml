@@ -388,6 +388,11 @@ jobs:
           python-version: "3.13.x"
           architecture: ${{ matrix.python_arch }}
 
+      - name: Set up Node.js for tentacle packaging
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: packages/tentacles/Services/Interfaces/node_web_interface/.nvmrc
+
       - name: Create isolated Python environment
         run: |
           octobot_venv="$(mktemp -d "$RUNNER_TEMP/octobot-container-venv.XXXXXX")"
