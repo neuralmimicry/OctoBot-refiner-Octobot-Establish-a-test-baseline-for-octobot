@@ -471,6 +471,8 @@ jobs:
             rm -rf "$runtime_tentacles"
           }
           trap cleanup EXIT
+          # Match the production Ansible profile: default Node mode disables
+          # the standalone browser interface that this health check verifies.
           podman run --detach \
             --health-cmd 'curl --fail --silent --show-error --max-time 5 http://127.0.0.1:5001/ >/dev/null' \
             --health-interval 15s \
@@ -478,6 +480,7 @@ jobs:
             --health-retries 5 \
             --volume "${runtime_tentacles}:/octobot/tentacles:Z" \
             --env DISABLE_SENTRY=True \
+            --env FORCE_OCTOBOT_STANDALONE=true \
             --env WEB_ADDRESS=0.0.0.0 \
             --name "${CONTAINER_NAME}" "${IMAGE}:${SHA}-${ARCH}"
           sleep "${WAIT_CONTAINER_TIME}"
