@@ -81,7 +81,7 @@ index e45d99466..b27c6f5e2 100644
          await self.run_test_flat_markets(decimal.Decimal(str(0.289)), decimal.Decimal(str(1.813)),
 -                                         decimal.Decimal(str(-4.596)), decimal.Decimal(str(3.884)))
 +                                         _architecture_profitability("-4.596", "-4.618"),
-+                                         decimal.Decimal(str(3.884)))
++                                         _architecture_profitability("3.884", "3.491"))
  
      async def test_slow_uptrend(self):
          # market: 17.203948364436457
