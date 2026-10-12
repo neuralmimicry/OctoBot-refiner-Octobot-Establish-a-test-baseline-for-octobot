@@ -441,6 +441,7 @@ jobs:
             --health-retries 5 \
             --volume "${runtime_tentacles}:/octobot/tentacles:Z" \
             --env DISABLE_SENTRY=True \
+            --env WEB_ADDRESS=0.0.0.0 \
             --name "${CONTAINER_NAME}" "${IMAGE}:${SHA}"
           sleep "${WAIT_CONTAINER_TIME}"
           podman logs "${CONTAINER_NAME}"
@@ -448,7 +449,13 @@ jobs:
             --format '{{.State.Status}}' \
             "${CONTAINER_NAME}")"
           test "$container_status" = running
-          podman healthcheck run "${CONTAINER_NAME}"
+          if ! podman healthcheck run "${CONTAINER_NAME}"; then
+            echo "Container health check failed; bounded state and HTTP status follow."
+            podman inspect --format '{{json .State}}' "${CONTAINER_NAME}"
+            podman exec "${CONTAINER_NAME}" sh -c \
+              'curl --silent --show-error --max-time 5 --output /dev/null --write-out "HTTP status %{http_code}\n" http://127.0.0.1:5001/ || true'
+            exit 1
+          fi
           test -s "${runtime_tentacles}/.swarmhpc-baked-id"
           test "$(cat "${runtime_tentacles}/.swarmhpc-baked-count")" -gt 0
 
