@@ -359,7 +359,7 @@ jobs:
       - name: Set Environment Variables
         run: |
           OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]' | tr -d '-')"
-          IMG=octobot
+          IMG=octobot-refiner
           {
             echo "VERSION=${GITHUB_REF##*/}"
             echo "IMAGE=ghcr.io/${OWNER}/${IMG}"
@@ -538,8 +538,9 @@ jobs:
         run: |
           set -euo pipefail
           owner="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]' | tr -d '-')"
+          image_name=octobot-refiner
           {
-            echo "IMAGE=ghcr.io/${owner}/octobot"
+            echo "IMAGE=ghcr.io/${owner}/${image_name}"
             echo "VERSION=${GITHUB_REF##*/}"
             echo "SHA=${GITHUB_SHA}"
           } >> "${GITHUB_ENV}"
@@ -604,7 +605,7 @@ jobs:
           ' "${raw_manifest}" >/dev/null
           registry_digest="sha256:$(sha256sum "${raw_manifest}" | awk '{print $1}')"
           test "${registry_digest}" = "${digest}"
-          printf 'ghcr.io/neuralmimicry/octobot@%s\n' "${digest}" > "${image_reference}"
+          printf '%s@%s\n' "${IMAGE}" "${digest}" > "${image_reference}"
           printf 'Runner-built multi-architecture image: %s\n' \
             "$(cat "${image_reference}")" >> "${GITHUB_STEP_SUMMARY}"
 
