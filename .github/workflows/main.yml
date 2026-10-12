@@ -34,7 +34,7 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
           git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
           test -n "$git_lfs_bin"
-          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          dirname "$git_lfs_bin" >> "$GITHUB_PATH"
           "$git_lfs_bin" version
 
       - uses: actions/checkout@v6
@@ -65,7 +65,7 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
           git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
           test -n "$git_lfs_bin"
-          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          dirname "$git_lfs_bin" >> "$GITHUB_PATH"
           "$git_lfs_bin" version
       - uses: actions/checkout@v6
 
@@ -285,7 +285,7 @@ jobs:
         done
 
   docker:
-    name: Build & Push container images with Podman
+    name: Build and test container image (${{ matrix.arch }})
     needs: [ build, tests ]
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/')
     permissions:
@@ -293,25 +293,38 @@ jobs:
       checks: write
       pull-requests: write
       packages: write
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ${{ fromJSON(matrix.runner_labels) }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ ubuntu-latest ]
+        include:
+          - arch: amd64
+            python_arch: x64
+            platform: linux/amd64
+            git_lfs_arch: amd64
+            git_lfs_sha256: e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d
+            runner_labels: '["self-hosted", "Linux", "X64"]'
+          - arch: arm64
+            python_arch: arm64
+            platform: linux/arm64
+            git_lfs_arch: arm64
+            git_lfs_sha256: ac9c8efac980bb0505ead384d087e2acb6486fd8498691a2165fa174ec6118c2
+            runner_labels: '["self-hosted", "Linux", "ARM64"]'
 
     steps:
       - name: Set up checksum-pinned Git LFS
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/git-lfs-linux-amd64-v3.8.0.tar.gz"
+          archive="$RUNNER_TEMP/git-lfs-linux-${{ matrix.git_lfs_arch }}-v3.8.0.tar.gz"
           curl --fail --location --retry 3 \
-            https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-amd64-v3.8.0.tar.gz \
+            "https://github.com/git-lfs/git-lfs/releases/download/v3.8.0/git-lfs-linux-${{ matrix.git_lfs_arch }}-v3.8.0.tar.gz" \
             --output "$archive"
-          echo "e455e00f15d9b95661b8d53498ffb0c3367962cf1ec73c31ab7369516cd6ab8d  $archive" | sha256sum --check
+          echo "${{ matrix.git_lfs_sha256 }}  $archive" | sha256sum --check
           mkdir -p "$RUNNER_TEMP/git-lfs"
           tar -xzf "$archive" -C "$RUNNER_TEMP/git-lfs"
           git_lfs_bin="$(find "$RUNNER_TEMP/git-lfs" -type f -name git-lfs -perm -111 -print -quit)"
           test -n "$git_lfs_bin"
-          echo "$(dirname "$git_lfs_bin")" >> "$GITHUB_PATH"
+          dirname "$git_lfs_bin" >> "$GITHUB_PATH"
           "$git_lfs_bin" version
 
       - uses: actions/checkout@v6
@@ -322,7 +335,22 @@ jobs:
       - name: Verify Podman is available
         run: podman version
 
+      - name: Verify native container architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64) host_arch=amd64 ;;
+            aarch64|arm64) host_arch=arm64 ;;
+            *) echo "Unsupported runner architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          if [[ "${host_arch}" != "${{ matrix.arch }}" ]]; then
+            echo "Runner architecture mismatch: expected ${{ matrix.arch }}, got ${host_arch}" >&2
+            exit 1
+          fi
+
       - name: Run hadolint
+        if: matrix.arch == 'amd64'
         uses: reviewdog/action-hadolint@v1
         with:
           github_token: ${{ github.token }}
@@ -332,29 +360,33 @@ jobs:
         run: |
           OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]' | tr -d '-')"
           IMG=octobot
-          echo "VERSION=${GITHUB_REF##*/}" >> $GITHUB_ENV
-          echo "IMAGE=ghcr.io/${OWNER}/${IMG}" >> $GITHUB_ENV
-          echo "LATEST=latest" >> $GITHUB_ENV
-          echo "STAGING=staging" >> $GITHUB_ENV
-          echo "STABLE=stable" >> $GITHUB_ENV
-          echo "TEST=test" >> $GITHUB_ENV
-          echo "SHA=${GITHUB_SHA}" >> $GITHUB_ENV
-          echo "CONTAINER_NAME=octobot" >> $GITHUB_ENV
-          echo "CHECK_TENTACLE_CONTAINER_TIME=10" >> $GITHUB_ENV
-          echo "WAIT_CONTAINER_TIME=80" >> $GITHUB_ENV
-          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-            echo "TENTACLES_URL_TAG=" >> $GITHUB_ENV
-          elif [[ "${GITHUB_REF}" == "refs/heads/master" || "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "TENTACLES_URL_TAG=stable" >> $GITHUB_ENV
-          else
-            echo "TENTACLES_URL_TAG=latest" >> $GITHUB_ENV
-          fi
+          {
+            echo "VERSION=${GITHUB_REF##*/}"
+            echo "IMAGE=ghcr.io/${OWNER}/${IMG}"
+            echo "ARCH=${{ matrix.arch }}"
+            echo "PLATFORM=${{ matrix.platform }}"
+            echo "LATEST=latest"
+            echo "STAGING=staging"
+            echo "STABLE=stable"
+            echo "TEST=test"
+            echo "SHA=${GITHUB_SHA}"
+            echo "CONTAINER_NAME=octobot-${{ matrix.arch }}"
+            echo "CHECK_TENTACLE_CONTAINER_TIME=10"
+            echo "WAIT_CONTAINER_TIME=80"
+            if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+              echo "TENTACLES_URL_TAG="
+            elif [[ "${GITHUB_REF}" == "refs/heads/master" || "${GITHUB_REF}" == refs/tags/* ]]; then
+              echo "TENTACLES_URL_TAG=stable"
+            else
+              echo "TENTACLES_URL_TAG=latest"
+            fi
+          } >> "${GITHUB_ENV}"
 
-      - name: Set up Python ${{ matrix.version }}
+      - name: Set up Python 3.13
         uses: actions/setup-python@v6
         with:
           python-version: "3.13.x"
-          architecture: x64
+          architecture: ${{ matrix.python_arch }}
 
       - name: Create isolated Python environment
         run: |
@@ -392,7 +424,7 @@ jobs:
 
       - name: Build OctoBot image
         run: >-
-          podman build --platform linux/amd64 --tag "${IMAGE}:${SHA}"
+          podman build --platform "${PLATFORM}" --tag "${IMAGE}:${SHA}-${ARCH}"
           --build-arg TENTACLES_URL_TAG="${TENTACLES_URL_TAG}"
           --build-arg VERSION="${VERSION}"
           --build-arg
@@ -402,9 +434,9 @@ jobs:
         if: >-
           github.event_name == 'pull_request' || github.event_name == 'push'
         run: |
-          podman build --platform linux/amd64 -f ./tests/Dockerfile \
-            --build-arg OCTOBOT_IMAGE="${IMAGE}:${SHA}" \
-            --tag "${IMAGE}:${TEST}" .
+          podman build --platform "${PLATFORM}" -f ./tests/Dockerfile \
+            --build-arg OCTOBOT_IMAGE="${IMAGE}:${SHA}-${ARCH}" \
+            --tag "${IMAGE}:${TEST}-${ARCH}" .
 
       - name: Run backtesting route acceptance tests
         if: >-
@@ -414,13 +446,13 @@ jobs:
           podman run --rm -i \
             -e DISABLE_SENTRY=True \
             -e OCTOBOT_TEST_PATH="${route_tests}" \
-            "${IMAGE}:${TEST}"
+            "${IMAGE}:${TEST}-${ARCH}"
 
       - name: Run container tests
         if: >-
           github.event_name == 'pull_request' || github.event_name == 'push'
         run: |
-          podman run --rm -i -e DISABLE_SENTRY=True "${IMAGE}:${TEST}"
+          podman run --rm -i -e DISABLE_SENTRY=True "${IMAGE}:${TEST}-${ARCH}"
 
       - name: Start and check container health
         if: >-
@@ -442,7 +474,7 @@ jobs:
             --volume "${runtime_tentacles}:/octobot/tentacles:Z" \
             --env DISABLE_SENTRY=True \
             --env WEB_ADDRESS=0.0.0.0 \
-            --name "${CONTAINER_NAME}" "${IMAGE}:${SHA}"
+            --name "${CONTAINER_NAME}" "${IMAGE}:${SHA}-${ARCH}"
           sleep "${WAIT_CONTAINER_TIME}"
           podman logs "${CONTAINER_NAME}"
           container_status="$(podman inspect \
@@ -458,8 +490,10 @@ jobs:
           fi
           test -s "${runtime_tentacles}/.swarmhpc-baked-id"
           test "$(cat "${runtime_tentacles}/.swarmhpc-baked-count")" -gt 0
+          image_arch="$(podman image inspect --format '{{.Architecture}}' "${IMAGE}:${SHA}-${ARCH}")"
+          test "${image_arch}" = "${ARCH}"
 
-      - name: Push release image tags
+      - name: Push native architecture image
         if: github.event_name == 'push'
         env:
           REGISTRY_TOKEN: >-
@@ -472,41 +506,119 @@ jobs:
           printf '%s' "$REGISTRY_TOKEN" | podman login \
             --authfile "$auth_file" --username "$GITHUB_ACTOR" \
             --password-stdin ghcr.io
+          podman push --authfile "$auth_file" \
+            "${IMAGE}:${SHA}-${ARCH}" \
+            "docker://${IMAGE}:sha-${SHA}-${ARCH}"
+
+  publish:
+    name: Publish immutable multi-architecture image
+    needs: [ docker ]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/'))
+    permissions:
+      contents: read
+      packages: write
+    runs-on: [ self-hosted, Linux, X64 ]
+    steps:
+      - name: Install and verify Podman publishing tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! PATH="/usr/bin:/bin:${PATH}" podman --version >/dev/null 2>&1 \
+            || ! PATH="/usr/bin:/bin:${PATH}" skopeo --version >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y podman skopeo
+          fi
+          echo "/usr/bin" >> "${GITHUB_PATH}"
+          export PATH="/usr/bin:/bin:${PATH}"
+          podman --version
+          skopeo --version
+
+      - name: Set image references
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]' | tr -d '-')"
+          {
+            echo "IMAGE=ghcr.io/${owner}/octobot"
+            echo "VERSION=${GITHUB_REF##*/}"
+            echo "SHA=${GITHUB_SHA}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Log in to GHCR
+        env:
+          REGISTRY_TOKEN: >-
+            ${{ secrets.GHCR_BOOTSTRAP_TOKEN || secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          auth_file="${RUNNER_TEMP}/octobot-registry-auth.json"
+          test -n "${REGISTRY_TOKEN}"
+          printf '%s' "${REGISTRY_TOKEN}" | podman login \
+            --authfile "${auth_file}" --username "${GITHUB_ACTOR}" \
+            --password-stdin ghcr.io
+          echo "REGISTRY_AUTH_FILE=${auth_file}" >> "${GITHUB_ENV}"
+
+      - name: Assemble and publish exact-source image index
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="${IMAGE}:sha-${SHA}"
+          digest_file="${RUNNER_TEMP}/octobot-image.digest"
+          raw_manifest="${RUNNER_TEMP}/octobot-image-manifest.json"
+          image_reference="${RUNNER_TEMP}/octobot-image-reference.txt"
+          auth_file="${REGISTRY_AUTH_FILE}"
+          trap 'rm -f "$auth_file"' EXIT
+
+          podman manifest rm "${manifest}" >/dev/null 2>&1 || true
+          podman manifest create "${manifest}"
+          podman manifest add "${manifest}" "docker://${IMAGE}:sha-${SHA}-amd64"
+          podman manifest add "${manifest}" "docker://${IMAGE}:sha-${SHA}-arm64"
+          podman manifest push --all --authfile "${auth_file}" \
+            --digestfile "${digest_file}" "${manifest}" "docker://${manifest}"
+
           tags=()
           if [[ "${GITHUB_REF}" == "refs/heads/dev" ]]; then
-            tags+=("${LATEST}")
+            tags+=(latest)
           elif [[ "${GITHUB_REF}" == "refs/heads/master" ]]; then
-            tags+=("${STAGING}")
+            tags+=(staging)
           elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            tags+=("${LATEST}" "${STABLE}" "${VERSION}")
+            tags+=(latest stable "${VERSION}")
           fi
-          # Keep an exact-source tag for every published image. The deployment
-          # consumes the digest recorded for this tag, never a moving channel.
-          immutable_tag="sha-${SHA}"
-          tags+=("${immutable_tag}")
           for tag in "${tags[@]}"; do
-            podman tag "${IMAGE}:${SHA}" "${IMAGE}:${tag}"
-            if [[ "${tag}" == "${immutable_tag}" ]]; then
-              podman push --authfile "$auth_file" \
-                --digestfile "${RUNNER_TEMP}/octobot-image.digest" \
-                "${IMAGE}:${tag}"
-            else
-              podman push --authfile "$auth_file" "${IMAGE}:${tag}"
-            fi
+            podman manifest push --all --authfile "${auth_file}" \
+              "${manifest}" "docker://${IMAGE}:${tag}"
           done
-          digest="$(cat "${RUNNER_TEMP}/octobot-image.digest")"
-          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          image_ref="${IMAGE}@${digest}"
-          printf '%s\n' "${image_ref}" > "${RUNNER_TEMP}/octobot-image-reference.txt"
-          printf 'Runner-built image: `%s`\n' "${image_ref}" >> "${GITHUB_STEP_SUMMARY}"
 
-      - name: Retain the immutable image reference
-        if: github.event_name == 'push'
+          digest="$(cat "${digest_file}")"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          skopeo inspect --raw --authfile "${auth_file}" \
+            "docker://${IMAGE}:sha-${SHA}" > "${raw_manifest}"
+          jq -e '
+            [.manifests[]?.platform
+              | select(
+                  .os == "linux"
+                  and (.architecture == "amd64" or .architecture == "arm64")
+                )
+              | .architecture]
+            | unique == ["amd64", "arm64"]
+          ' "${raw_manifest}" >/dev/null
+          registry_digest="sha256:$(sha256sum "${raw_manifest}" | awk '{print $1}')"
+          test "${registry_digest}" = "${digest}"
+          printf 'ghcr.io/neuralmimicry/octobot@%s\n' "${digest}" > "${image_reference}"
+          printf 'Runner-built multi-architecture image: %s\n' \
+            "$(cat "${image_reference}")" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Retain immutable image reference
         uses: actions/upload-artifact@v7
         with:
           name: octobot-image-reference-${{ github.sha }}
           path: ${{ runner.temp }}/octobot-image-reference.txt
           if-no-files-found: error
+
+      - name: Remove temporary registry credentials
+        if: always()
+        shell: bash
+        run: rm -f "${RUNNER_TEMP}/octobot-registry-auth.json"
 
   tentacles:
     needs: [ build, tests, publish-npm ]
