@@ -52,6 +52,8 @@ STOPPING_TIMEOUT = 30
 CURRENT_BOT_DATA = "current_bot_data"
 # data collector can be really slow, let it up to 2 hours to run
 DATA_COLLECTOR_TIMEOUT = 2 * commons_constants.HOURS_TO_SECONDS
+DATA_DESCRIPTION_WORKERS = 4
+_data_description_loads = {}
 
 
 def get_full_candle_history_exchange_list():
@@ -76,14 +78,40 @@ def _is_usable_description(description):
            and description[backtesting_enums.DataFormatKeys.TIME_FRAMES.value] is not None
 
 
-async def _retrieve_data_files_with_description(files):
+async def _load_data_files_with_description(files):
     files_with_description = []
-    await asyncio.gather(*[_get_description(data_file, files_with_description) for data_file in files])
+    pending = iter(files)
+
+    async def worker():
+        for data_file in pending:
+            await _get_description(data_file, files_with_description)
+
+    await asyncio.gather(*(worker() for _ in range(min(DATA_DESCRIPTION_WORKERS, len(files)))))
     return sorted(
         files_with_description,
         key=lambda f: f[1][backtesting_enums.DataFormatKeys.TIMESTAMP.value],
         reverse=True
     )
+
+
+async def _retrieve_data_files_with_description(files):
+    # Each SQLite description opens its own worker thread. Share overlapping
+    # page loads and cap those workers rather than opening every saved file at once.
+    key = (asyncio.get_running_loop(), tuple(sorted(files)))
+    task = _data_description_loads.get(key)
+    if task is None:
+        task = asyncio.create_task(_load_data_files_with_description(key[1]))
+        _data_description_loads[key] = task
+
+        def finished(completed):
+            _data_description_loads.pop(key, None)
+            # Observe errors even if every HTTP waiter was cancelled.
+            if not completed.cancelled():
+                completed.exception()
+
+        task.add_done_callback(finished)
+    # A disconnected browser must not cancel another browser's shared load.
+    return await asyncio.shield(task)
 
 
 def get_data_files_with_description():
