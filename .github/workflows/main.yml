@@ -466,19 +466,29 @@ jobs:
           set -euo pipefail
           runtime_tentacles="$(mktemp -d \
             "$RUNNER_TEMP/octobot-runtime-tentacles.XXXXXX")"
+          runtime_user="$(mktemp -d \
+            "$RUNNER_TEMP/octobot-runtime-user.XXXXXX")"
           cleanup() {
             podman rm --force "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-            rm -rf "$runtime_tentacles"
+            rm -rf "$runtime_tentacles" "$runtime_user"
           }
           trap cleanup EXIT
+          # Match production's persisted profile volume with an isolated,
+          # source-matched non-trading fixture. Do not fetch mutable profiles
+          # or tentacles from the network during runtime acceptance.
+          mkdir -p "$runtime_user/profiles/default"
+          cp -R packages/tentacles/profiles/non-trading/. "$runtime_user/profiles/default/"
+          printf '%s\n' '{"profile":"default","accepted_terms":true,"distribution":"default","exchanges":{},"services":{"web":{"auto-open-in-web-browser":false}},"notification":{}}' > "$runtime_user/config.json"
           # Match the production Ansible profile: default Node mode disables
           # the standalone browser interface that this health check verifies.
           podman run --detach \
+            --network none \
             --health-cmd 'curl --fail --silent --show-error --max-time 5 http://127.0.0.1:5001/ >/dev/null' \
             --health-interval 15s \
             --health-timeout 10s \
             --health-retries 5 \
             --volume "${runtime_tentacles}:/octobot/tentacles:Z" \
+            --volume "${runtime_user}:/octobot/user:Z" \
             --env DISABLE_SENTRY=True \
             --env FORCE_OCTOBOT_STANDALONE=true \
             --env WEB_ADDRESS=0.0.0.0 \
