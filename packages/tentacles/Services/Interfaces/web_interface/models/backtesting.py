@@ -59,6 +59,11 @@ _data_description_lock = threading.Lock()
 _data_description_executor = concurrent.futures.ThreadPoolExecutor(
     max_workers=1, thread_name_prefix="SavedDataDescriptions"
 )
+_data_file_view_lock = threading.Lock()
+_data_file_view_cache = {}
+_data_file_view_fingerprints = {}
+_data_file_view_future = None
+_data_file_view_error = False
 
 
 def get_full_candle_history_exchange_list():
@@ -83,13 +88,19 @@ def _is_usable_description(description):
            and description[backtesting_enums.DataFormatKeys.TIME_FRAMES.value] is not None
 
 
-async def _load_data_files_with_description(files):
+async def _load_data_files_with_description(files, on_result=None):
     files_with_description = []
     pending = iter(files)
 
     async def worker():
         for data_file in pending:
-            await _get_description(data_file, files_with_description)
+            if on_result is None:
+                await _get_description(data_file, files_with_description)
+            else:
+                result = []
+                await _get_description(data_file, result)
+                files_with_description.extend(result)
+                on_result(data_file, result[0][1] if result else None)
 
     workers = [asyncio.create_task(worker()) for _ in range(min(DATA_DESCRIPTION_WORKERS, len(files)))]
     try:
@@ -138,8 +149,60 @@ def _run_data_description_load(files):
 
 
 def get_data_files_with_description():
+    global _data_file_view_fingerprints, _data_file_view_future, _data_file_view_error
     files = backtesting_api.get_all_available_data_files()
-    return interfaces_util.run_in_bot_async_executor(_retrieve_data_files_with_description(files))
+    fingerprints = {name: _data_file_fingerprint(name) for name in files}
+    with _data_file_view_lock:
+        _data_file_view_fingerprints = fingerprints
+        for name in list(_data_file_view_cache):
+            if name not in fingerprints:
+                del _data_file_view_cache[name]
+        pending = [name for name, signature in fingerprints.items()
+                   if signature is not None and (
+                       name not in _data_file_view_cache or _data_file_view_cache[name][0] != signature)]
+        if pending and (_data_file_view_future is None or _data_file_view_future.done()):
+            _data_file_view_error = False
+            _data_file_view_future = _data_description_executor.submit(_run_data_file_view_load, pending)
+        available = [(name, value[1]) for name, value in _data_file_view_cache.items()
+                     if name in fingerprints and value[0] == fingerprints[name] and value[1] is not None]
+    return sorted(available, key=lambda value: value[1][backtesting_enums.DataFormatKeys.TIMESTAMP.value], reverse=True)
+
+
+def _data_file_fingerprint(name):
+    try:
+        info = os.stat(os.path.join(backtesting_constants.BACKTESTING_FILE_PATH, name))
+        return info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+    except OSError:
+        return None
+
+
+def _record_data_file_view(name, description):
+    fingerprint = _data_file_fingerprint(name)
+    with _data_file_view_lock:
+        _data_file_view_cache[name] = fingerprint, description
+
+
+def _run_data_file_view_load(files):
+    global _data_file_view_error
+    try:
+        asyncio.run(_load_data_files_with_description(files, on_result=_record_data_file_view))
+    except Exception:
+        with _data_file_view_lock:
+            _data_file_view_error = True
+        bot_logging.get_logger("SavedDataDescriptions").exception("Unable to read saved data file details")
+
+
+def get_data_file_description_status():
+    with _data_file_view_lock:
+        read_files = sum(name in _data_file_view_cache and _data_file_view_cache[name][0] == signature
+                         for name, signature in _data_file_view_fingerprints.items())
+        return {
+            "loading": bool(_data_file_view_fingerprints) and _data_file_view_future is not None
+                       and not _data_file_view_future.done(),
+            "read_files": read_files,
+            "total_files": len(_data_file_view_fingerprints),
+            "error": _data_file_view_error,
+        }
 
 
 def start_backtesting_using_specific_files(files, source, reset_tentacle_config=False, run_on_common_part_only=True,

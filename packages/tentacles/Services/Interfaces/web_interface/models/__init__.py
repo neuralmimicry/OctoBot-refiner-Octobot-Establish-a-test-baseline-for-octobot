@@ -41,6 +41,7 @@ from tentacles.Services.Interfaces.web_interface.models.backtesting import (
     get_full_candle_history_exchange_list,
     get_other_history_exchange_list,
     get_data_files_with_description,
+    get_data_file_description_status,
     start_backtesting_using_specific_files,
     stop_previous_backtesting,
     is_backtesting_enabled,
@@ -300,6 +301,7 @@ from tentacles.Services.Interfaces.web_interface.models.distributions import (
 
 __all__ = [
     "get_data_files_with_description",
+    "get_data_file_description_status",
     "start_backtesting_using_specific_files",
     "stop_previous_backtesting",
     "is_backtesting_enabled",

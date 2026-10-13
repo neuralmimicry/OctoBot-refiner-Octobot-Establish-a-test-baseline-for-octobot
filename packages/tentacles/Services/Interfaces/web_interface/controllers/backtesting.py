@@ -99,7 +99,8 @@ def register(blueprint):
             else:
                 return flask.render_template('backtesting.html',
                                              activated_trading_mode=models.get_config_activated_trading_mode(),
-                                             data_files=models.get_data_files_with_description())
+                                             data_files=models.get_data_files_with_description(),
+                                             data_files_status=models.get_data_file_description_status())
 
 
     @blueprint.route("/backtesting_run_id")
@@ -198,6 +199,7 @@ def register(blueprint):
                 # here return template to force page reload because of file upload via input form
                 return flask.render_template('data_collector.html',
                                              data_files=models.get_data_files_with_description(),
+                                             data_files_status=models.get_data_file_description_status(),
                                              other_ccxt_exchanges=sorted(models.get_other_history_exchange_list()),
                                              full_candle_history_ccxt_exchanges=models.get_full_candle_history_exchange_list(),
                                              current_exchange=models.get_current_exchange(),
@@ -232,6 +234,7 @@ def register(blueprint):
             current_exchange = models.get_current_exchange()
             return flask.render_template('data_collector.html',
                                          data_files=models.get_data_files_with_description(),
+                                         data_files_status=models.get_data_file_description_status(),
                                          other_ccxt_exchanges=sorted(models.get_other_history_exchange_list()),
                                          full_candle_history_ccxt_exchanges=models.get_full_candle_history_exchange_list(),
                                          current_exchange=models.get_current_exchange(),
