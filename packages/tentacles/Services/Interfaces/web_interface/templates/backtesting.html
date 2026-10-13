@@ -127,9 +127,11 @@
                 </div>
             </span>
         {% else %}
+            {% if not data_files_status or not data_files_status.loading %}
             <h4 class="py-3">
                 No backtesting data files found. Once you have data files, they will be displayed here to be used in backtesting.
             </h4>
+            {% endif %}
             <div class="d-flex justify-content-center">
                 <a href="{{ url_for('data_collector') }}" class="btn btn-primary waves-effect"> <i class="fa fa-cloud-download-alt"></i> Get historical data</a>
                 <a href="{{ url_for('social_data_collector') }}" class="btn btn-outline-info waves-effect ml-2"> <i class="fa fa-download"></i> Download social data</a>
