@@ -51,14 +51,28 @@ async def test_large_overlapping_loads_have_bounded_workers_and_keep_all_results
 
 @pytest.mark.asyncio
 async def test_failed_load_is_released_and_next_request_can_retry(monkeypatch):
+    entered = asyncio.Event()
+    active = 0
+
     async def broken(name, results):
-        raise ValueError('unreadable test metadata')
+        nonlocal active
+        if name == '0':
+            await entered.wait()
+            raise ValueError('unreadable test metadata')
+        active += 1
+        if active == models.DATA_DESCRIPTION_WORKERS - 1:
+            entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            active -= 1
 
     monkeypatch.setattr(models, '_get_description', broken)
     with pytest.raises(ValueError, match='unreadable'):
-        await models._retrieve_data_files_with_description(['file'])
+        await asyncio.wait_for(models._retrieve_data_files_with_description(['0', '1', '2', '3', '4']), 1)
     await asyncio.sleep(0)
     assert not models._data_description_loads
+    assert active == 0
 
     async def recovered(name, results):
         results.append((name, {'timestamp': 1}))

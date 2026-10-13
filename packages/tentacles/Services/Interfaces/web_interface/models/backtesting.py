@@ -86,7 +86,14 @@ async def _load_data_files_with_description(files):
         for data_file in pending:
             await _get_description(data_file, files_with_description)
 
-    await asyncio.gather(*(worker() for _ in range(min(DATA_DESCRIPTION_WORKERS, len(files)))))
+    workers = [asyncio.create_task(worker()) for _ in range(min(DATA_DESCRIPTION_WORKERS, len(files)))]
+    try:
+        await asyncio.gather(*workers)
+    except BaseException:
+        for task in workers:
+            task.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
+        raise
     return sorted(
         files_with_description,
         key=lambda f: f[1][backtesting_enums.DataFormatKeys.TIMESTAMP.value],
