@@ -71,6 +71,19 @@ class TestGetDefaultTentaclesUrl:
         assert constants.LONG_VERSION in tentacles_url
 
     def test_default_url_uses_long_version(self):
-        with mock.patch("octobot.configuration_manager.os.getenv", side_effect=lambda key, default=None: default):
+        with mock.patch.object(constants, "TENTACLES_REQUIRED_VERSION", ""), \
+                mock.patch("octobot.configuration_manager.os.getenv", side_effect=lambda key, default=None: default):
             tentacles_url = configuration_manager.get_default_tentacles_url()
+        assert constants.LONG_VERSION in tentacles_url
+
+    def test_required_release_channel_is_embedded_in_default_url(self):
+        with mock.patch.object(constants, "TENTACLES_REQUIRED_VERSION", "stable"), \
+                mock.patch("octobot.configuration_manager.os.getenv", side_effect=lambda key, default=None: default):
+            tentacles_url = configuration_manager.get_default_tentacles_url()
+        assert "/stable/" in tentacles_url
+
+    def test_explicit_version_overrides_required_release_channel(self):
+        with mock.patch.object(constants, "TENTACLES_REQUIRED_VERSION", "stable"), \
+                mock.patch("octobot.configuration_manager.os.getenv", side_effect=lambda key, default=None: default):
+            tentacles_url = configuration_manager.get_default_tentacles_url(version=constants.LONG_VERSION)
         assert constants.LONG_VERSION in tentacles_url
