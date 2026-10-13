@@ -118,8 +118,15 @@ def test_requests_on_distinct_executor_loops_share_one_bounded_load(monkeypatch)
 
     monkeypatch.setattr(models, '_get_description', description)
     files = [str(number) for number in range(20)]
+    owner = {}
+
+    async def disconnected_browser():
+        owner['loop'] = asyncio.get_running_loop()
+        owner['task'] = asyncio.current_task()
+        return await models._retrieve_data_files_with_description(files)
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as browsers:
-        first = browsers.submit(asyncio.run, models._retrieve_data_files_with_description(files))
+        first = browsers.submit(asyncio.run, disconnected_browser())
         try:
             assert entered.wait(1)
             # Both loops attach before allowing the shared I/O to finish.
@@ -133,9 +140,12 @@ def test_requests_on_distinct_executor_loops_share_one_bounded_load(monkeypatch)
             monkeypatch.setattr(models.asyncio, 'wrap_future', wrapped)
             second = browsers.submit(asyncio.run, models._retrieve_data_files_with_description(list(reversed(files))))
             assert second_started.wait(1)
+            owner['loop'].call_soon_threadsafe(owner['task'].cancel)
+            with pytest.raises(asyncio.CancelledError):
+                first.result(timeout=1)
         finally:
             release.set()
-        assert first.result(timeout=3) == second.result(timeout=3)
+        assert len(second.result(timeout=3)) == len(files)
     assert peak == models.DATA_DESCRIPTION_WORKERS
     assert len(calls) == len(files)
     assert set(calls.values()) == {1}
