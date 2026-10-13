@@ -1,3 +1,5 @@
+FROM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS node_runtime
+
 FROM python:3.13-slim-trixie AS base
 
 WORKDIR /tmp
@@ -52,6 +54,11 @@ COPY docker/* /octobot/
 # from this exact checked-out source tree. Keep them separate from the runtime
 # volume so Kubernetes can copy this immutable tree into its persistent volume.
 COPY tentacles/ /opt/octobot-baked-tentacles/
+# Production checks source-export prerequisites before taking its baked path.
+# Keep the same checked-out source and pinned Node toolchain available there.
+COPY packages/tentacles/ /opt/octobot-source/packages/tentacles/
+COPY --from=node_runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node_runtime /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt-get update \
@@ -69,6 +76,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && chmod +x docker-entrypoint.sh \
     && chmod +x tunnel.sh \
+    && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && node --version \
+    && npm --version \
     && test -s /opt/octobot-baked-tentacles/.swarmhpc-baked-count \
     && test -s /opt/octobot-baked-tentacles/.swarmhpc-baked-id
 
