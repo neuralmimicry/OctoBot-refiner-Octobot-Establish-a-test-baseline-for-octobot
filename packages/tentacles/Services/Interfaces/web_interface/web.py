@@ -14,10 +14,12 @@
 #  You should have received a copy of the GNU Lesser General Public
 #  License along with this library.
 import os
+import asyncio
 import time
 import flask
 import flask_cors
 import werkzeug.middleware.proxy_fix
+import werkzeug.serving
 import flask_socketio
 from flask_compress import Compress
 from flask_caching import Cache
@@ -46,6 +48,12 @@ import tentacles.Services.Services_bases as Service_bases
 import octobot_tentacles_manager.api
 
 
+class QuietThreadedRequestHandler(werkzeug.serving.WSGIRequestHandler):
+    def log_request(self, code="-", size="-"):
+        # Preserve no-access-log behavior, including private query data.
+        pass
+
+
 class WebInterface(services_interfaces.AbstractWebInterface):
 
     REQUIRED_SERVICES = [Service_bases.WebService]
@@ -71,6 +79,7 @@ class WebInterface(services_interfaces.AbstractWebInterface):
         self.host = None
         self.port = None
         self.websocket_instance = None
+        self.http_server = None
         self.web_login_manger = None
         self.requires_password = False
         self.password_hash = ""
@@ -221,7 +230,9 @@ class WebInterface(services_interfaces.AbstractWebInterface):
         # handles all namespaces without an explicit error handler
         websocket_instance = flask_socketio.SocketIO(
             server_instance,
-            async_mode="gevent",
+            # Filesystem/async-executor futures can block a native thread.
+            # Isolate slow pages from unrelated HTTP health/API traffic.
+            async_mode="threading",
             cors_allowed_origins=flask_util.get_user_defined_cors_allowed_origins()
         )
 
@@ -257,16 +268,20 @@ class WebInterface(services_interfaces.AbstractWebInterface):
             if self.should_open_web_interface:
                 self._open_web_interface_on_browser()
 
+            self.http_server = werkzeug.serving.make_server(
+                self.host, self.port, self.server_instance, threaded=True,
+                request_handler=QuietThreadedRequestHandler,
+            )
             self.started = True
-            self.websocket_instance.run(self.server_instance,
-                                        host=self.host,
-                                        port=self.port,
-                                        log_output=False,
-                                        debug=False)
+            self.http_server.serve_forever(poll_interval=0.25)
             return True
         except Exception as e:
             self.logger.exception(e, False, f"Fail to start web interface : {e}")
         finally:
+            if self.http_server is not None:
+                self.http_server.server_close()
+                self.http_server = None
+            self.started = False
             self.logger.debug("Web interface thread stopped")
         return False
 
@@ -282,6 +297,9 @@ class WebInterface(services_interfaces.AbstractWebInterface):
         return self.threaded_start()
 
     async def stop(self):
+        if self.http_server is not None:
+            await asyncio.to_thread(self.http_server.shutdown)
+            return
         if self.websocket_instance is not None:
             try:
                 self.logger.debug("Stopping web interface")
