@@ -102,6 +102,7 @@ def register(blueprint):
                     activated_trading_mode=models.get_config_activated_trading_mode()
                     if is_trading_strategy_configuration else None,
                     data_files=models.get_data_files_with_description() if is_trading_strategy_configuration else None,
+                    data_files_status=models.get_data_file_description_status() if is_trading_strategy_configuration else None,
                     missing_tentacles=missing_tentacles,
                     user_commands=tentacle_commands,
                     current_profile=models.get_current_profile()

@@ -1,0 +1,11 @@
+{% if data_files_status is defined and data_files_status and (data_files_status.loading or data_files_status.error) %}
+<div class="alert {{ 'alert-warning' if data_files_status.error else 'alert-info' }}" role="status">
+    {% if data_files_status.error %}
+        Some saved file details could not be loaded. Refresh to retry.
+    {% else %}
+        Loading saved file details: {{ data_files_status.read_files }} of {{ data_files_status.total_files }} read.
+        Available files are shown below.
+    {% endif %}
+    <button type="button" class="btn btn-sm btn-outline-primary ml-2" onclick="window.location.reload()">Refresh saved files</button>
+</div>
+{% endif %}
