@@ -16,6 +16,7 @@
 import copy
 import os
 import asyncio
+import concurrent.futures
 import ccxt
 import threading
 
@@ -54,6 +55,10 @@ CURRENT_BOT_DATA = "current_bot_data"
 DATA_COLLECTOR_TIMEOUT = 2 * commons_constants.HOURS_TO_SECONDS
 DATA_DESCRIPTION_WORKERS = 4
 _data_description_loads = {}
+_data_description_lock = threading.Lock()
+_data_description_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="SavedDataDescriptions"
+)
 
 
 def get_full_candle_history_exchange_list():
@@ -104,21 +109,32 @@ async def _load_data_files_with_description(files):
 async def _retrieve_data_files_with_description(files):
     # Each SQLite description opens its own worker thread. Share overlapping
     # page loads and cap those workers rather than opening every saved file at once.
-    key = (asyncio.get_running_loop(), tuple(sorted(files)))
-    task = _data_description_loads.get(key)
-    if task is None:
-        task = asyncio.create_task(_load_data_files_with_description(key[1]))
-        _data_description_loads[key] = task
+    # OctoBot creates a fresh asyncio loop for each executor call. Use a
+    # concurrent future so requests on different loops can share the same load.
+    key = tuple(sorted(files))
+    with _data_description_lock:
+        task = _data_description_loads.get(key)
+        created = task is None
+        if created:
+            task = _data_description_executor.submit(_run_data_description_load, key)
+            _data_description_loads[key] = task
 
+    if created:
         def finished(completed):
-            _data_description_loads.pop(key, None)
+            with _data_description_lock:
+                if _data_description_loads.get(key) is completed:
+                    _data_description_loads.pop(key)
             # Observe errors even if every HTTP waiter was cancelled.
             if not completed.cancelled():
                 completed.exception()
 
         task.add_done_callback(finished)
     # A disconnected browser must not cancel another browser's shared load.
-    return await asyncio.shield(task)
+    return await asyncio.shield(asyncio.wrap_future(task))
+
+
+def _run_data_description_load(files):
+    return asyncio.run(_load_data_files_with_description(files))
 
 
 def get_data_files_with_description():

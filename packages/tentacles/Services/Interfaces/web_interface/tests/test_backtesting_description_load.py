@@ -1,6 +1,8 @@
 """Saved-file metadata reads stay bounded and survive disconnected page waiters."""
 import asyncio
 import collections
+import concurrent.futures
+import threading
 
 import pytest
 
@@ -9,8 +11,8 @@ import tentacles.Services.Interfaces.web_interface.models.backtesting as models
 
 @pytest.mark.asyncio
 async def test_large_overlapping_loads_have_bounded_workers_and_keep_all_results(monkeypatch):
-    entered = asyncio.Event()
-    release = asyncio.Event()
+    entered = threading.Event()
+    release = threading.Event()
     calls = collections.Counter()
     active = 0
     peak = 0
@@ -22,7 +24,8 @@ async def test_large_overlapping_loads_have_bounded_workers_and_keep_all_results
         calls[name] += 1
         if active == models.DATA_DESCRIPTION_WORKERS:
             entered.set()
-        await release.wait()
+        while not release.is_set():
+            await asyncio.sleep(0.001)
         await asyncio.sleep(0)
         results.append((name, {'timestamp': int(name)}))
         active -= 1
@@ -31,13 +34,15 @@ async def test_large_overlapping_loads_have_bounded_workers_and_keep_all_results
     files = [str(number) for number in range(1800)]
     first = asyncio.create_task(models._retrieve_data_files_with_description(files))
     second = asyncio.create_task(models._retrieve_data_files_with_description(list(reversed(files))))
-    await asyncio.wait_for(entered.wait(), 1)
-    assert sum(calls.values()) == models.DATA_DESCRIPTION_WORKERS
-    first.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await first
-    assert not second.done()
-    release.set()
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        assert sum(calls.values()) == models.DATA_DESCRIPTION_WORKERS
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        assert not second.done()
+    finally:
+        release.set()
     results = await asyncio.wait_for(second, 3)
     assert peak == models.DATA_DESCRIPTION_WORKERS
     assert len(results) == len(files)
@@ -88,3 +93,49 @@ async def test_empty_saved_file_list_needs_no_worker(monkeypatch):
 
     monkeypatch.setattr(models, '_get_description', unexpected)
     assert await models._retrieve_data_files_with_description([]) == []
+
+
+def test_requests_on_distinct_executor_loops_share_one_bounded_load(monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    calls = collections.Counter()
+    active = 0
+    peak = 0
+
+    async def description(name, results):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        calls[name] += 1
+        if active == models.DATA_DESCRIPTION_WORKERS:
+            entered.set()
+        try:
+            while not release.is_set():
+                await asyncio.sleep(0.001)
+            results.append((name, {'timestamp': int(name)}))
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(models, '_get_description', description)
+    files = [str(number) for number in range(20)]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as browsers:
+        first = browsers.submit(asyncio.run, models._retrieve_data_files_with_description(files))
+        try:
+            assert entered.wait(1)
+            # Both loops attach before allowing the shared I/O to finish.
+            second_started = threading.Event()
+            original_wrap = models.asyncio.wrap_future
+
+            def wrapped(future, **kwargs):
+                second_started.set()
+                return original_wrap(future, **kwargs)
+
+            monkeypatch.setattr(models.asyncio, 'wrap_future', wrapped)
+            second = browsers.submit(asyncio.run, models._retrieve_data_files_with_description(list(reversed(files))))
+            assert second_started.wait(1)
+        finally:
+            release.set()
+        assert first.result(timeout=3) == second.result(timeout=3)
+    assert peak == models.DATA_DESCRIPTION_WORKERS
+    assert len(calls) == len(files)
+    assert set(calls.values()) == {1}
