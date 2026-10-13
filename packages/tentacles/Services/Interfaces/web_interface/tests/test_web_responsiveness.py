@@ -8,7 +8,6 @@ import threading
 import time
 import urllib.request
 
-import pytest
 import socketio
 
 import octobot.enums as enums
