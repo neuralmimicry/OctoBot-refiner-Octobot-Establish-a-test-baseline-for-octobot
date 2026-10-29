@@ -47,3 +47,4 @@ patches/0038-backtesting-route-response-guard.patch site
 patches/0039-strict-gail-order-exchange.patch site
 patches/0040-strict-gail-order-exchange-test.patch tests
 patches/0041-arm64-baselines-and-offline-wallet-tests.patch tests
+patches/0042-public-candle-history.patch build

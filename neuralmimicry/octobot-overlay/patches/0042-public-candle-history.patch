@@ -1,0 +1,238 @@
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/api/market_history.py b/packages/tentacles/Services/Interfaces/web_interface/api/market_history.py
+new file mode 100644
+index 000000000..467c0eacb
+--- /dev/null
++++ b/packages/tentacles/Services/Interfaces/web_interface/api/market_history.py
+@@ -0,0 +1,110 @@
++"""Read-only public candle history, independent of the UI's watched-pair cache.
++
++The venue's native asynchronous REST client runs on OctoBot's event loop. This
++endpoint never activates pairs, changes strategies, or invokes a trader. Native
++adapters supply UTC epoch seconds and OHLCV rows; only closed candles are exposed.
++"""
++import asyncio
++import math
++
++import flask
++
++import octobot_commons.enums as commons_enums
++import octobot_services.interfaces.util as interfaces_util
++import octobot_trading.api as trading_api
++import tentacles.Services.Interfaces.web_interface.login as login
++import tentacles.Services.Interfaces.web_interface.util as util
++
++
++def closed_candles(rows, duration, now, limit):
++    """Reject corrupt/unaligned data; a candle close is observable at its end.
++
++    Do not replace absent observation times with request time. Otherwise stale
++    data appears fresh and backtests can see a candle's close before it occurs.
++    """
++    result = []
++    previous = 0
++    for row in rows or []:
++        if len(row) != 6:
++            raise RuntimeError("Invalid venue OHLCV row length")
++        values = [float(value) for value in row]
++        if not all(math.isfinite(value) for value in values):
++            raise RuntimeError("Non-finite venue OHLCV value")
++        opened, opening, high, low, close, volume = values
++        if (opened <= previous or opened <= 0 or opened > 10_000_000_000
++                or min(opening, high, low, close) <= 0 or volume < 0
++                or low > min(opening, close) or high < max(opening, close)):
++            raise RuntimeError("Invalid venue OHLCV values or timestamp order")
++        previous = opened
++        if opened + duration <= now:
++            result.append(values)
++    if not result:
++        raise RuntimeError("Venue returned no valid closed candles")
++    return result[-limit:]
++
++
++def get_market_candles(exchange, symbol, time_frame, limit, resolver):
++    """Resolve an explicit venue and fetch at most 1000 public candles."""
++    if not exchange or not exchange.strip():
++        raise ValueError("exchange is required")
++    if not symbol or not symbol.strip():
++        raise ValueError("symbol is required")
++    symbol = symbol.strip().replace("|", "/").upper()
++    frame = commons_enums.TimeFrames(time_frame)
++    # Calendar periods cannot use a fixed close-time offset.
++    if frame in (commons_enums.TimeFrames.ONE_MONTH, commons_enums.TimeFrames.ONE_YEAR):
++        raise ValueError("Calendar time frames are not supported")
++    limit = int(limit)
++    if not 2 <= limit <= 1000:
++        raise ValueError("limit must be between 2 and 1000")
++    manager = resolver(exchange)
++    if symbol not in trading_api.get_all_exchange_symbols(manager):
++        raise KeyError(f"Symbol is not listed on {exchange}: {symbol}")
++
++    async def fetch():
++        return await asyncio.wait_for(
++            manager.exchange.get_symbol_prices(symbol, frame, limit=limit), timeout=30
++        )
++
++    rows = interfaces_util.run_in_bot_main_loop(fetch(), timeout=35)
++    now = manager.exchange.get_exchange_current_time()
++    duration = commons_enums.TimeFramesMinutes[frame] * 60
++    rows = closed_candles(rows, duration, now, limit)
++    return {
++        "exchange": trading_api.get_exchange_name(manager),
++        "exchange_id": trading_api.get_exchange_manager_id(manager),
++        "symbol": symbol,
++        "time_frame": frame.value,
++        "source": "venue_rest",
++        "simulated": trading_api.is_trader_simulated(manager),
++        "timestamp_unit": "seconds",
++        "timestamp_semantics": "candle_open",
++        "closed_only": True,
++        "candles": dict(zip(
++            ("time", "open", "high", "low", "close", "volume"),
++            map(list, zip(*rows)),
++        )),
++    }
++
++
++def register(blueprint, resolver):
++    """Share trading's venue resolver and normal API authentication boundary."""
++    @blueprint.route("/market/candles", methods=["GET"])
++    @login.login_required_when_activated
++    def market_candles():
++        try:
++            return flask.jsonify(get_market_candles(
++                flask.request.args.get("exchange"),
++                flask.request.args.get("symbol"),
++                flask.request.args.get("time_frame", "1h"),
++                flask.request.args.get("limit", "500"),
++                resolver,
++            ))
++        except ValueError as err:
++            return util.get_rest_reply(str(err), 400)
++        except KeyError as err:
++            return util.get_rest_reply(str(err), 404)
++        except Exception:
++            # Exception bodies may include exchange credentials or network details.
++            # The API contract remains explicit, never HTTP 200 plus JSON null.
++            return util.get_rest_reply("Venue candle history unavailable", 503)
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/api/trading.py b/packages/tentacles/Services/Interfaces/web_interface/api/trading.py
+index 81e5ef5f3..330beab3b 100644
+--- a/packages/tentacles/Services/Interfaces/web_interface/api/trading.py
++++ b/packages/tentacles/Services/Interfaces/web_interface/api/trading.py
+@@ -23,6 +23,7 @@ import tentacles.Services.Interfaces.web_interface.util as util
+ import tentacles.Services.Interfaces.web_interface.login as login
+ import tentacles.Services.Interfaces.web_interface.models as models
+ import octobot_trading.api as trading_api
++import tentacles.Services.Interfaces.web_interface.api.market_history as market_history
+ 
+ 
+ 
+@@ -88,6 +89,7 @@ def _get_market_ticker(exchange_name, symbol):
+     }
+ 
+ def register(blueprint):
++    market_history.register(blueprint, _get_exchange_manager)
+ 
+     @blueprint.route("/market/ticker", methods=['GET'])
+     @login.login_required_when_activated
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_market_history.py b/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_market_history.py
+new file mode 100644
+index 000000000..7a992d3d1
+--- /dev/null
++++ b/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_market_history.py
+@@ -0,0 +1,96 @@
++"""Candle API contracts: venue isolation, causality, bounded reads and failures."""
++import asyncio
++from types import SimpleNamespace
++from unittest.mock import AsyncMock
++
++import aiohttp
++import pytest
++
++import octobot.enums
++import tentacles.Services.Interfaces.web_interface.api.market_history as history
++import tentacles.Services.Interfaces.web_interface.tests as web_tests
++import tentacles.Services.Interfaces.web_interface.tests.distribution_tester as distribution_tester
++
++
++def test_history_excludes_unfinished_candle_and_preserves_open_times():
++    rows = [[3600, 10, 12, 9, 11, 5], [7200, 11, 12, 10, 12, 7]]
++    assert history.closed_candles(rows, 3600, 8000, 500) == [rows[0]]
++
++
++@pytest.mark.parametrize("rows", [
++    [], [[3600, 10, 12, 9, 11]], [[3600, 10, float("nan"), 9, 11, 5]],
++    [[3600000000000, 10, 12, 9, 11, 5]], [[3600, 10, 9, 8, 11, 5]],
++    [[3600, 10, 12, 9, 11, -1]],
++    [[3600, 10, 12, 9, 11, 5], [3600, 10, 12, 9, 11, 5]],
++])
++def test_history_rejects_corrupt_data_instead_of_successful_null(rows):
++    with pytest.raises(RuntimeError):
++        history.closed_candles(rows, 3600, 10000, 500)
++
++
++@pytest.mark.parametrize("exchange,symbol,frame,limit", [
++    (None, "BTC/USDT", "1h", "500"), ("binance", None, "1h", "500"),
++    ("binance", "BTC/USDT", "bogus", "500"),
++    ("binance", "BTC/USDT", "1M", "500"),
++    ("binance", "BTC/USDT", "1h", "1001"),
++    ("binance", "BTC/USDT", "1h", "0"),
++    ("binance", "BTC/USDT", "1h", "invalid"),
++])
++def test_invalid_requests_never_resolve_a_venue(exchange, symbol, frame, limit):
++    def resolver(_):
++        pytest.fail("invalid request reached a venue")
++    with pytest.raises(ValueError):
++        history.get_market_candles(exchange, symbol, frame, limit, resolver)
++
++
++def test_history_fetches_native_public_rest_without_activating_pairs(monkeypatch):
++    venue = SimpleNamespace(
++        get_symbol_prices=AsyncMock(return_value=[[3600, 10, 12, 9, 11, 5]]),
++        get_exchange_current_time=lambda: 8000,
++    )
++    manager = SimpleNamespace(exchange=venue)
++    monkeypatch.setattr(history.trading_api, "get_all_exchange_symbols", lambda _: ["BTC/USDT"])
++    monkeypatch.setattr(history.trading_api, "get_exchange_name", lambda _: "bitget")
++    monkeypatch.setattr(history.trading_api, "get_exchange_manager_id", lambda _: "bitget-id")
++    monkeypatch.setattr(history.trading_api, "is_trader_simulated", lambda _: False)
++    monkeypatch.setattr(history.interfaces_util, "run_in_bot_main_loop", lambda coro, **_: asyncio.run(coro))
++    requested = []
++    def resolver(name):
++        requested.append(name)
++        return manager
++    result = history.get_market_candles("bitget", "BTC/USDT", "1h", "500", resolver)
++    assert requested == ["bitget"]
++    assert result["exchange"] == "bitget"
++    assert result["candles"]["time"] == [3600]
++    assert result["candles"]["close"] == [11]
++    assert result["closed_only"] is True
++    venue.get_symbol_prices.assert_awaited_once_with("BTC/USDT", history.commons_enums.TimeFrames.ONE_HOUR, limit=500)
++    with pytest.raises(KeyError):
++        history.get_market_candles("bitget", "UNKNOWN/USDT", "1h", "500", resolver)
++    assert venue.get_symbol_prices.await_count == 1
++
++
++@pytest.mark.asyncio
++async def test_candle_route_requires_normal_web_authentication():
++    async with web_tests.get_web_interface(True, octobot.enums.OctoBotDistribution.DEFAULT) as interface:
++        async with aiohttp.ClientSession() as session:
++            await web_tests.check_page_login_redirect(
++                f"{distribution_tester.LOCAL_HOST_URL}{interface.port}/api/market/candles", session
++            )
++
++
++@pytest.mark.asyncio
++async def test_candle_route_returns_explicit_errors(monkeypatch):
++    async with web_tests.get_web_interface(False, octobot.enums.OctoBotDistribution.DEFAULT) as interface:
++        url = f"{distribution_tester.LOCAL_HOST_URL}{interface.port}/api/market/candles"
++        async with aiohttp.ClientSession() as session:
++            async with session.get(url) as response:
++                assert response.status == 400
++            async with session.get(url + "?exchange=missing-venue&symbol=BTC/USDT") as response:
++                assert response.status == 404
++            def unavailable(*_):
++                raise RuntimeError("private credential must not reach HTTP response")
++            monkeypatch.setattr(history, "get_market_candles", unavailable)
++            async with session.get(url) as response:
++                assert response.status == 503
++                assert "private credential" not in await response.text()
