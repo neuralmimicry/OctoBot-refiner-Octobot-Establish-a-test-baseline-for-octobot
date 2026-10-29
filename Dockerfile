@@ -36,13 +36,15 @@ FROM python:3.13-slim-trixie
 ARG TENTACLES_URL_TAG=""
 ARG VERSION=""
 ARG SOURCE_REPOSITORY=""
+ARG SOURCE_REVISION="unknown"
 ENV TENTACLES_URL_TAG=$TENTACLES_URL_TAG
 ENV VERSION=$VERSION
 
 LABEL maintainer="Drakkar-Software" \
       version="${VERSION}" \
       description="OctoBot - Cryptocurrency trading bot" \
-      org.opencontainers.image.source="${SOURCE_REPOSITORY}"
+      org.opencontainers.image.source="${SOURCE_REPOSITORY}" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}"
 
 WORKDIR /octobot
 
@@ -96,7 +98,6 @@ EXPOSE 8000
 EXPOSE 5001-5010
 
 HEALTHCHECK --interval=15s --timeout=10s --retries=5 \
-    CMD curl --fail --silent --show-error --max-time 5 \
-        http://127.0.0.1:5001/ >/dev/null
+    CMD ["curl", "--fail", "--silent", "--show-error", "--max-time", "5", "--output", "/dev/null", "http://127.0.0.1:5001/"]
 
 ENTRYPOINT ["./docker-entrypoint.sh"]
