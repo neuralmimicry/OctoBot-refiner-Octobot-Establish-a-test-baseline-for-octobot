@@ -1,8 +1,15 @@
 diff --git a/packages/tentacles/Services/Interfaces/web_interface/tests/distribution_tester.py b/packages/tentacles/Services/Interfaces/web_interface/tests/distribution_tester.py
+index 1e1fabec0..adb62f5e4 100644
 --- a/packages/tentacles/Services/Interfaces/web_interface/tests/distribution_tester.py
 +++ b/packages/tentacles/Services/Interfaces/web_interface/tests/distribution_tester.py
-@@ -23,1 +23,3 @@
+@@ -21,7 +21,9 @@ import octobot.enums
+ 
+ 
+ LOCAL_HOST_URL = "http://localhost:"
 -NEURALMIMICRY_PARAMETERISED_ROUTES = ["/api/market/ticker"]
 +# Required query parameters are covered by dedicated route/auth/error tests.
 +# A no-argument page crawl must not expect success from either market API.
 +NEURALMIMICRY_PARAMETERISED_ROUTES = ["/api/market/ticker", "/api/market/candles"]
+ 
+ 
+ class AbstractDistributionTester:
