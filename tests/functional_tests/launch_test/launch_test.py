@@ -27,7 +27,10 @@ from octobot.octobot import OctoBot
 import octobot.community as community
 
 
-@pytest.mark.timeout(12)
+# Allow distinct startup, ten-second operation and shutdown budgets. The old
+# twelve-second total could expire before shutdown even began. A thread-based
+# outer deadline also terminates pytest if a broken teardown ignores cancellation.
+@pytest.mark.timeout(35, method="thread")
 @pytest.mark.asyncio
 async def test_run_bot():
     # use custom logs folder
@@ -40,26 +43,27 @@ async def test_run_bot():
     bot = OctoBot(config, ignore_config=True)
     bot.task_manager.init_async_loop()
     try:
-        await start_bot(bot, init_logger(logs_folder=logs_folder))
-        # Exchange construction runs in channel tasks after initialize returns.
-        # Wait for actual readiness instead of spending ten of the twelve
-        # seconds asleep while live market requests compete with CI startup.
-        await bot.exchange_producer.created_all_exchanges.wait()
-        # Registration precedes evaluator/data initialization. The normal
-        # metadata task waits for those data events; stopping at registration
-        # alone races evaluator startup against exchange teardown.
-        await bot._init_metadata_run_task
+        async with asyncio.timeout(10):
+            await start_bot(bot, init_logger(logs_folder=logs_folder))
+            # Exchange construction and evaluator/data initialization continue
+            # in channel tasks after initialize returns.
+            await bot.exchange_producer.created_all_exchanges.wait()
+            await bot._init_metadata_run_task
         assert bot.initialized
         assert bot.exchange_producer.exchange_manager_ids
         assert (
             len(bot.exchange_producer.exchange_manager_ids)
             == bot.exchange_producer.to_create_exchanges_count
         )
+        # Preserve the original observation window: late price-conversion and
+        # watched-pair work can start after the initial data-ready events.
+        await asyncio.sleep(10)
     finally:
         # A startup/readiness failure must still close exchange sessions and
         # community tasks before pytest-asyncio cancels the remaining tasks.
         try:
-            await stop_bot(bot)
+            async with asyncio.timeout(10):
+                await stop_bot(bot)
         finally:
             bot.task_manager.async_loop.close()
             WebInterface.enabled = web_interface_enabled
