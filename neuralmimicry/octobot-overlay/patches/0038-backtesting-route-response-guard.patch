@@ -15,7 +15,7 @@ Ansible task: Return bounded client errors for unsupported backtesting requests 
  create mode 100644 packages/tentacles/Services/Interfaces/web_interface/tests/test_backtesting_route_validation.py
 
 diff --git a/packages/tentacles/Services/Interfaces/web_interface/controllers/backtesting.py b/packages/tentacles/Services/Interfaces/web_interface/controllers/backtesting.py
-index efff2d84..4f27f39e 100644
+index efff2d84d0d4732708c8b206375adc0532db79c3..4f27f39ef004e3dbbbf94d5a6dc99710caeab4e4 100644
 --- a/packages/tentacles/Services/Interfaces/web_interface/controllers/backtesting.py
 +++ b/packages/tentacles/Services/Interfaces/web_interface/controllers/backtesting.py
 @@ -34,7 +34,9 @@ def register(blueprint):
@@ -70,7 +70,7 @@ index efff2d84..4f27f39e 100644
                  return flask.render_template('backtesting.html',
 diff --git a/packages/tentacles/Services/Interfaces/web_interface/tests/test_backtesting_route_validation.py b/packages/tentacles/Services/Interfaces/web_interface/tests/test_backtesting_route_validation.py
 new file mode 100644
-index 00000000..81e94ed2
+index 0000000000000000000000000000000000000000..bcce3941c40a92b18d6b4fb9f83a296e3ef659ad
 --- /dev/null
 +++ b/packages/tentacles/Services/Interfaces/web_interface/tests/test_backtesting_route_validation.py
 @@ -0,0 +1,95 @@
@@ -169,5 +169,3 @@ index 00000000..81e94ed2
 +                url = f"http://localhost:{interface.port}/backtesting"
 +                async with session.post(url, json={}, allow_redirects=False) as response:
 +                    assert response.status == 400
--- 
-2.53.0

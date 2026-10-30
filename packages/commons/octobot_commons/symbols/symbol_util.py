@@ -127,11 +127,46 @@ def convert_symbol(
     return symbol.replace(symbol_separator, new_symbol_separator)
 
 
+def get_bare_ticker_from_coin_with_maybe_network(coin: str) -> str:
+    """
+    Bare currency ticker from a portfolio asset key (``USDT`` or ``USDT@ETH``).
+    Not for trading pair strings; use ``base_asset_ticker()`` / ``quote_asset_ticker()`` on symbols.
+    """
+    if not coin:
+        return ""
+    if octobot_commons.NETWORK_SEPARATOR in coin:
+        return coin.rsplit(octobot_commons.NETWORK_SEPARATOR, 1)[0]
+    return coin
+
+
 def is_usd_like_coin(coin: str) -> bool:
     """
-    :return: True if the given coin is a USD-like coin
+    :return: True if the given coin's bare ticker is a USD-like coin
     """
-    return coin in constants.USD_LIKE_COINS
+    asset_ticker = get_bare_ticker_from_coin_with_maybe_network(coin)
+    return bool(asset_ticker) and asset_ticker in constants.USD_LIKE_COINS
+
+
+def is_same_coin(coin_a: str, coin_b: str) -> bool:
+    """
+    :return: True when both coins share the same bare ticker (e.g. ``USDT`` and ``USDT@ETH``)
+    """
+    return get_bare_ticker_from_coin_with_maybe_network(coin_a) == get_bare_ticker_from_coin_with_maybe_network(coin_b)
+
+
+def is_usd_like_to_usd_like_pair(symbol: str) -> bool:
+    """
+    :return: True if both base and quote of the symbol are USD-like coins
+    """
+    if not is_symbol(symbol):
+        return False
+    parsed_symbol = parse_symbol(symbol)
+    return (
+        bool(parsed_symbol.base)
+        and bool(parsed_symbol.quote)
+        and is_usd_like_coin(parsed_symbol.base)
+        and is_usd_like_coin(parsed_symbol.quote)
+    )
 
 
 def get_most_common_usd_like_symbol(pairs: list[str]) -> str:

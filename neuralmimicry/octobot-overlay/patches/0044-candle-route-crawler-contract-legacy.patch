@@ -1,10 +1,15 @@
 diff --git a/packages/tentacles/Services/Interfaces/web_interface/tests/models/distributions/distribution_tester.py b/packages/tentacles/Services/Interfaces/web_interface/tests/models/distributions/distribution_tester.py
+index e60fb69f728f2afaae7c5b0948a78dd22343e054..b2c8bacb072e359a2789cfc211bfad61d46b7f6b 100644
 --- a/packages/tentacles/Services/Interfaces/web_interface/tests/models/distributions/distribution_tester.py
 +++ b/packages/tentacles/Services/Interfaces/web_interface/tests/models/distributions/distribution_tester.py
-@@ -25,4 +25,4 @@
+@@ -23,8 +23,8 @@ import octobot.enums
+ 
+ LOCAL_HOST_URL = "http://localhost:"
  # NeuralMimicry overlay: Gail API routes that require query parameters (they
 -# answer 404 without them). Covered by tests/test_neuralmimicry_gail_api.py.
 -NEURALMIMICRY_PARAMETERISED_ROUTES = ["/api/market/ticker"]
 +# answer errors without them). Covered by dedicated API contract tests.
 +NEURALMIMICRY_PARAMETERISED_ROUTES = ["/api/market/ticker", "/api/market/candles"]
  # Page checks use web_interface_tests._aihttp_request (one retry on incomplete payload flake).
+ BROWSE_PAGE_CHECK_MAX_CONCURRENCY = 12
+ BROWSE_CLIENT_CONNECTION_DRAIN_SECONDS = 0.05

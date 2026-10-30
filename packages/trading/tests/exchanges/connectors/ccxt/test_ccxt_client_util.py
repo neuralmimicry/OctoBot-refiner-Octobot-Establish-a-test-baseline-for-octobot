@@ -22,6 +22,7 @@ import ccxt.async_support as ccxt
 import octobot_commons.aiohttp_util as aiohttp_util
 
 import octobot_trading.exchanges as exchanges
+import octobot_trading.exchanges.config.exchange_credentials_data as exchange_credentials_data
 import octobot_trading.exchanges.connectors.ccxt.ccxt_client_util as ccxt_client_util
 import octobot_trading.constants as constants
 
@@ -177,3 +178,116 @@ async def _exchange_with_proxy_config(proxy_config: exchanges.ExchangeProxyConfi
         if exchange:
             exchange.timeout_on_exit = 0    # avoid waiting for the exchange to close
             await exchange.close()
+
+
+class TestExchangeClassRequiresApiCredentials:
+    def test_returns_false_when_no_credentials_required(self):
+        assert ccxt_client_util._exchange_class_requires_api_credentials(ccxt.wizardswap) is False
+
+    def test_returns_true_when_api_key_required(self):
+        assert ccxt_client_util._exchange_class_requires_api_credentials(ccxt.binance) is True
+
+
+class TestCreateClientMissingApiKeyWarning:
+    @staticmethod
+    def _exchange_manager_for_create_client():
+        exchange_manager = mock.Mock()
+        exchange_manager.exchange_only = True
+        exchange_manager.is_simulated = False
+        exchange_manager.ignore_config = False
+        exchange_manager.check_config.return_value = True
+        exchange_manager.is_backtesting = True
+        exchange_manager.check_credentials = False
+        exchange_manager.exchange_name = "test-exchange"
+        exchange_manager.get_exchange_credentials.return_value = (
+            exchange_credentials_data.ExchangeCredentialsData()
+        )
+        exchange_manager.proxy_config = None
+        return exchange_manager
+
+    def test_no_warning_when_exchange_requires_no_api_credentials(self):
+        exchange_manager = self._exchange_manager_for_create_client()
+        logger = mock.Mock()
+        mock_client = mock.Mock()
+        mock_client.logger = mock.Mock()
+        with mock.patch.object(
+            ccxt_client_util,
+            "instantiate_exchange",
+            return_value=mock_client,
+        ):
+            ccxt_client_util.create_client(
+                ccxt.wizardswap,
+                exchange_manager,
+                logger,
+                {},
+                {},
+                {},
+                should_authenticate=False,
+            )
+        logger.warning.assert_not_called()
+
+    def test_warning_when_exchange_requires_api_credentials(self):
+        exchange_manager = self._exchange_manager_for_create_client()
+        logger = mock.Mock()
+        mock_client = mock.Mock()
+        mock_client.logger = mock.Mock()
+        with mock.patch.object(
+            ccxt_client_util,
+            "instantiate_exchange",
+            return_value=mock_client,
+        ):
+            ccxt_client_util.create_client(
+                ccxt.binance,
+                exchange_manager,
+                logger,
+                {},
+                {},
+                {},
+                should_authenticate=False,
+            )
+        logger.warning.assert_called_once()
+
+
+class TestSetSandboxMode:
+    def _exchange_connector(self, *, raise_type_error: bool):
+        client = mock.Mock()
+        client.options = {}
+        if raise_type_error:
+            client.set_sandbox_mode.side_effect = TypeError("'NoneType' object is not iterable")
+        else:
+            client.set_sandbox_mode = mock.Mock()
+        exchange_connector = mock.Mock()
+        exchange_connector.client = client
+        exchange_connector.name = "test-exchange"
+        exchange_connector.logger = mock.Mock()
+        exchange_connector.exchange_manager.exchange.uses_demo_trading_instead_of_sandbox.return_value = False
+        return exchange_connector
+
+    def test_type_error_when_sandboxed_raises_not_supported(self):
+        exchange_connector = self._exchange_connector(raise_type_error=True)
+        try:
+            ccxt_client_util.set_sandbox_mode(exchange_connector, True)
+            raise AssertionError("Expected ccxt.NotSupported")
+        except ccxt.NotSupported as error:
+            assert "test-exchange" in str(error)
+            assert "sandbox/test URLs are unavailable" in str(error)
+        exchange_connector.logger.warning.assert_called_once()
+        warning_message = exchange_connector.logger.warning.call_args.args[0]
+        assert "sandbox/test URLs are unavailable" in warning_message
+
+    def test_type_error_when_not_sandboxed_is_ignored(self):
+        exchange_connector = self._exchange_connector(raise_type_error=True)
+        result = ccxt_client_util.set_sandbox_mode(exchange_connector, False)
+        assert result is None
+        exchange_connector.logger.warning.assert_not_called()
+
+    def test_not_supported_is_re_raised_with_clear_message(self):
+        exchange_connector = self._exchange_connector(raise_type_error=False)
+        exchange_connector.client.set_sandbox_mode.side_effect = ccxt.NotSupported("sandbox mode")
+        try:
+            ccxt_client_util.set_sandbox_mode(exchange_connector, True)
+            raise AssertionError("Expected ccxt.NotSupported")
+        except ccxt.NotSupported as error:
+            assert "test-exchange" in str(error)
+            assert "sandbox/test URLs are unavailable" in str(error)
+        exchange_connector.logger.warning.assert_called_once()

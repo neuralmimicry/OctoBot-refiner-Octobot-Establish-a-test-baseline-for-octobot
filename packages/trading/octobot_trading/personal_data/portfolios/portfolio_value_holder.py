@@ -75,20 +75,27 @@ class PortfolioValueHolder:
             # portfolio is not initialized, skip portfolio values initialization
             return
         try:
-            self._sync_portfolio_current_value_using_available_currencies_values(init_price_fetchers=False)
+            self.sync_portfolio_current_value_using_available_currencies_values(init_price_fetchers=False)
             portfolio_value = self.portfolio_current_value
             if not portfolio_value or portfolio_value <= constants.ZERO:
+                exchange_name = self.portfolio_manager.exchange_manager.exchange_name
                 if self._should_have_initialized_portfolio_values():
-                    # should not happen (if it does, holding ratios using portfolio_value can't 
-                    # be computed)
-                    # This is not critial but should be fixed if seen
-                    self.logger.error(
-                        f"[{self.portfolio_manager.exchange_manager.exchange_name}] Portfolio current value "
-                        f"can't be initialized: {portfolio_value=}"
-                    )
+                    if self.portfolio_manager.exchange_manager.exchange.supports_fetching_balance():
+                        # should not happen (if it does, holding ratios using portfolio_value can't
+                        # be computed)
+                        # This is not critial but should be fixed if seen
+                        self.logger.error(
+                            f"[{exchange_name}] Portfolio current value "
+                            f"can't be initialized: {portfolio_value=}"
+                        )
+                    else:
+                        self.logger.info(
+                            f"[{exchange_name}] Portfolio current value can't be initialized: "
+                            f"exchange does not support fetching balance ({portfolio_value=})"
+                        )
                 else:
                     self.logger.info(
-                        f"[{self.portfolio_manager.exchange_manager.exchange_name}] Portfolio current value "
+                        f"[{exchange_name}] Portfolio current value "
                         f"not initialized: no traded asset holdings in portfolio"
                     )
         except Exception as err:
@@ -153,7 +160,7 @@ class PortfolioValueHolder:
         :return: the current crypto-currencies values
         """
         if not self.current_crypto_currencies_values:
-            self._sync_portfolio_current_value_using_available_currencies_values()
+            self.sync_portfolio_current_value_using_available_currencies_values()
         return self.current_crypto_currencies_values
 
     def get_current_holdings_values(self):
@@ -218,7 +225,7 @@ class PortfolioValueHolder:
         Initialize values required by portfolio profitability to perform its profitability calculation
         :param force_recompute_origin_portfolio: when True, force origin portfolio computation
         """
-        self._sync_portfolio_current_value_using_available_currencies_values()
+        self.sync_portfolio_current_value_using_available_currencies_values()
         self._init_portfolio_values_if_necessary(force_recompute_origin_portfolio)
 
     def get_origin_portfolio_current_value(self, refresh_values=False):
@@ -295,7 +302,7 @@ class PortfolioValueHolder:
             if currency not in currencies_values
         })
 
-    def _sync_portfolio_current_value_using_available_currencies_values(self, init_price_fetchers=True):
+    def sync_portfolio_current_value_using_available_currencies_values(self, init_price_fetchers=True):
         """
         :param init_price_fetchers: When True, can init price using fetchers
         Update the portfolio current value with the current portfolio instance

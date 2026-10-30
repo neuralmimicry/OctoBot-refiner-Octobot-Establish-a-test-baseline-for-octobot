@@ -19,6 +19,7 @@ import uuid
 import octobot_commons.configuration as configuration
 import octobot_commons.constants as common_constants
 import octobot_commons.logging as logging
+import octobot_commons.symbols as commons_symbols
 import octobot_commons.timestamp_util as timestamp_util
 
 import octobot_trading.exchange_channel as exchange_channel
@@ -220,12 +221,7 @@ class ExchangeManager(util.Initializable):
         if not ignore_orders_and_trades:
             if exchange_data.trades:
                 self.exchange_personal_data.trades_manager.initialize_from_exchange_data(exchange_data)
-            if (
-                exchange_data.orders_details.open_orders
-                and exchange_data.orders_details.open_orders[0]
-                .get(constants.STORAGE_ORIGIN_VALUE, {})
-                .get(enums.ExchangeConstantsOrderColumns.TYPE.value)
-            ):
+            if exchange_data.orders_details.has_valid_open_orders():
                 await self.exchange_personal_data.orders_manager.initialize_from_exchange_data(exchange_data)
             if lock_chained_orders_funds:
                 await self.exchange_personal_data.portfolio_manager.initialize_from_exchange_data(exchange_data)
@@ -275,7 +271,8 @@ class ExchangeManager(util.Initializable):
         return self.exchange.get_pair_from_exchange(symbol, error_on_missing=error_on_missing)
 
     def get_exchange_quote_and_base(self, symbol):
-        return self.exchange.get_split_pair_from_exchange(symbol)
+        parsed_symbol = commons_symbols.parse_symbol(symbol)
+        return parsed_symbol.base, parsed_symbol.quote
 
     def get_symbol_data(self, symbol):
         return self.exchange_symbols_data.get_exchange_symbol_data(symbol)
@@ -377,6 +374,9 @@ class ExchangeManager(util.Initializable):
     def get_exchange_sub_account_id(self, exchange_name):
         config_exchange = self.config[common_constants.CONFIG_EXCHANGES][exchange_name]
         return config_exchange.get(common_constants.CONFIG_EXCHANGE_SUB_ACCOUNT, None)
+
+    def should_log_exchange_lifecycle_debug(self) -> bool:
+        return not self.exchange_only
 
     def is_storage_enabled(self):
         return self.enable_storage and not self.exchange_only and self.bot_id is not None

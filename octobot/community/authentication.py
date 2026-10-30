@@ -20,8 +20,7 @@ import os
 import time
 import threading
 import typing
-import octobot.community.activity_analysis.config_path_binding as config_path_binding
-import octobot.community.activity_analysis.activity_metrics as activity_metrics
+import octobot.community.config_path_binding as config_path_binding
 import decimal
 
 import octobot.constants as constants
@@ -40,6 +39,7 @@ import octobot.community.wallet_backend as wallet_backend
 import octobot.community.feeds as community_feeds
 import octobot.community.tentacles_packages as community_tentacles_packages
 import octobot.community.community_bot as community_bot
+import octobot_commons.asyncio_tools as asyncio_tools
 import octobot_commons.constants as commons_constants
 import octobot_commons.enums as commons_enums
 import octobot_commons.authentication as authentication
@@ -49,6 +49,8 @@ import octobot_commons.user_root_folder_provider as user_root_folder_provider
 import octobot_trading.enums as trading_enums
 import octobot_sync.client as sync_client
 import octobot_sync.chain as sync_chain
+import octobot_sync.mirror.writer as sync_session_writer
+import starfish_spaces
 
 
 def expired_session_retrier(func):
@@ -112,6 +114,7 @@ class CommunityAuthentication(authentication.Authenticator):
 
     def __init__(self, config=None, backend_url=None, backend_key=None, use_as_singleton=True):
         super().__init__(use_as_singleton=use_as_singleton)
+        self._use_as_singleton = use_as_singleton
         self.config: typing.Optional[commons_configuration.Configuration] = config
         self.backend_url: str = backend_url or identifiers_provider.IdentifiersProvider.BACKEND_URL
         self.backend_key: str = backend_key or identifiers_provider.IdentifiersProvider.BACKEND_KEY
@@ -133,6 +136,8 @@ class CommunityAuthentication(authentication.Authenticator):
         self._sync_client = None
         self.sync_user_id: str = ""
         self._sync_client_lock = threading.Lock()
+        self._dk_sessions: dict[str, starfish_spaces.Session] = {}
+        self._dk_session_lock = asyncio.Lock()
         self._wallet_backend: wallet_backend.WalletBackend = wallet_backend.WalletBackend(
             self._get_wallet_sync_storage(), self.logger
         )
@@ -145,6 +150,7 @@ class CommunityAuthentication(authentication.Authenticator):
         )
 
     def update(self, configuration: commons_configuration.Configuration):
+        self.config = configuration
         self.configuration_storage.set_configuration(configuration)
         self._wallet_backend = wallet_backend.WalletBackend(
             self._get_wallet_sync_storage(), self.logger
@@ -311,8 +317,9 @@ class CommunityAuthentication(authentication.Authenticator):
             await self._re_create_client()
 
     def is_using_the_current_loop(self):
-        return self.supabase_client.event_loop is None \
-            or self.supabase_client.event_loop is asyncio.get_event_loop()
+        if self.supabase_client.event_loop is None:
+            return True
+        return asyncio_tools.is_on_async_loop(self.supabase_client.event_loop)
 
     def is_initialized(self):
         return self.initialized_event is not None and self.initialized_event.is_set()
@@ -578,7 +585,6 @@ class CommunityAuthentication(authentication.Authenticator):
             "and webhook url will be different on this bot."
         )
         self._save_bot_id("")
-        activity_metrics.ActivityMetrics.clear_activity_bot_id(self.config)
         self.save_tradingview_email("")
         # also reset mqtt id to force a new mqtt id creation
         self._save_mqtt_device_uuid("")
@@ -596,7 +602,8 @@ class CommunityAuthentication(authentication.Authenticator):
             self._clear_bot_scoped_config()
 
     async def stop(self):
-        self.logger.debug("Stopping ...")
+        if self._use_as_singleton:
+            self.logger.debug("Stopping ...")
         if self._fetch_account_task is not None and not self._fetch_account_task.done():
             self._fetch_account_task.cancel()
         await self.supabase_client.aclose()
@@ -607,7 +614,12 @@ class CommunityAuthentication(authentication.Authenticator):
         if self._sync_client:
             await self._sync_client.close()
             self._sync_client = None
-        self.logger.debug("Stopped")
+        for session in self._dk_sessions.values():
+            await session.content_client.close()
+            await session.account_client.close()
+        self._dk_sessions.clear()
+        if self._use_as_singleton:
+            self.logger.debug("Stopped")
 
     def _update_supports(self, resp_status, json_data):
         if resp_status == 200:
@@ -680,6 +692,20 @@ class CommunityAuthentication(authentication.Authenticator):
     def verify_wallet_passphrase(self, address: str, passphrase: str) -> bool:
         return self._wallet_backend.verify_wallet_passphrase(address, passphrase)
 
+    def recover_passphrase_from_ownership_proof(
+        self,
+        address: str,
+        new_passphrase: str,
+        seed: typing.Optional[str] = None,
+        private_key: typing.Optional[str] = None,
+    ) -> None:
+        return self._wallet_backend.recover_passphrase_from_ownership_proof(
+            address,
+            new_passphrase,
+            seed=seed,
+            private_key=private_key,
+        )
+
     def decrypt_wallet_by_address(self, address: str, passphrase: str):
         return self._wallet_backend.decrypt_wallet_by_address(address, passphrase)
 
@@ -711,6 +737,33 @@ class CommunityAuthentication(authentication.Authenticator):
 
     def get_wallet_by_user_id(self, user_id: str) -> sync_chain.Wallet:
         return self._wallet_backend.get_wallet_by_user_id(user_id)
+
+    def has_wallet_for_user_id(self, user_id: str) -> bool:
+        return self._wallet_backend.has_wallet_for_user_id(user_id)
+
+    async def get_session_for_address(self, address: str) -> starfish_spaces.Session:
+        """Build (and cache) a dk-namespace starfish_spaces Session for the given wallet.
+
+        Used for trading-signal publish/pull — see octobot_sync.artifacts. Distinct from
+        get_sync_client_for_address's bare StarfishClient: a space needs a Session.
+        """
+        cached = self._dk_sessions.get(address)
+        if cached is not None:
+            return cached
+        async with self._dk_session_lock:
+            cached = self._dk_sessions.get(address)
+            if cached is not None:
+                return cached
+            sync_url = identifiers_provider.IdentifiersProvider.SYNC_SERVER_URL
+            if not sync_url:
+                raise wallet_backend.WalletError("No sync server URL configured")
+            wallet = self.get_wallet(address)
+            derived = sync_session_writer.derived_identity_for_mirror(wallet.private_key)
+            session = await sync_session_writer.build_mirror_session(
+                derived, sync_url, name="octobot-signals"
+            )
+            self._dk_sessions[address] = session
+            return session
 
     def init_sync_client_for_wallet(self, address: str) -> None:
         """Initialize the sync client for the given wallet address without passphrase."""

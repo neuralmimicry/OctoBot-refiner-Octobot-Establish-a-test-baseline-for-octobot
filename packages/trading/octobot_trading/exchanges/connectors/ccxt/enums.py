@@ -19,6 +19,7 @@ import enum
 class ExchangeConstantsCCXTColumns(enum.Enum):
     TIMESTAMP = "timestamp"
     DATETIME = "datetime"
+    DEBT = "debt"
 
 
 class ExchangeConstantsMarketStatusCCXTColumns(enum.Enum):
@@ -153,6 +154,8 @@ class ExchangeColumns(enum.Enum):
     REST = "rest"
     WEBSOCKET = "ws"
     LOGO_URL = "logo"
+    ICON_URL = "icon"
+    REFERRAL = "referral"
 
 
 class ExchangeMarginTypes(enum.Enum):

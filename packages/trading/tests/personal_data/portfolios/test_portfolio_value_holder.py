@@ -166,7 +166,7 @@ async def test_get_current_holdings_values(backtesting_trader):
         portfolio_value_holder.value_converter.last_prices_by_trading_pair["ETH/BTC"] = decimal.Decimal("50")
         # Update current_crypto_currencies_values to include ETH with the calculated price
         portfolio_value_holder.current_crypto_currencies_values["ETH"] = decimal.Decimal("50")
-        portfolio_value_holder._sync_portfolio_current_value_using_available_currencies_values(init_price_fetchers=False)
+        portfolio_value_holder.sync_portfolio_current_value_using_available_currencies_values(init_price_fetchers=False)
         assert portfolio_value_holder.get_current_holdings_values() == {
             'BTC': decimal.Decimal("10"),
             'ETH': decimal.Decimal("5000"),
@@ -255,19 +255,19 @@ async def test_update_origin_crypto_currencies_values(backtesting_trader):
            is False
 
 @pytest.mark.parametrize("backtesting_exchange_manager", ["spot", "margin", "futures", "options"], indirect=True)
-async def test__sync_portfolio_current_value_using_available_currencies_values(backtesting_trader):
+async def test_sync_portfolio_current_value_using_available_currencies_values(backtesting_trader):
     config, exchange_manager, trader = backtesting_trader
     portfolio_manager = exchange_manager.exchange_personal_data.portfolio_manager
     portfolio_value_holder = portfolio_manager.portfolio_value_holder
 
     assert portfolio_value_holder.portfolio_current_value == constants.ZERO
-    portfolio_value_holder._sync_portfolio_current_value_using_available_currencies_values()
+    portfolio_value_holder.sync_portfolio_current_value_using_available_currencies_values()
     assert portfolio_value_holder.portfolio_current_value == decimal.Decimal(str(10))
 
     portfolio_value_holder.value_converter.missing_currency_data_in_exchange.clear()
     exchange_manager.client_symbols.append("BTC/USDT")
     portfolio_manager.handle_mark_price_update("BTC/USDT", decimal.Decimal(str(100)))
-    portfolio_value_holder._sync_portfolio_current_value_using_available_currencies_values()
+    portfolio_value_holder.sync_portfolio_current_value_using_available_currencies_values()
     assert portfolio_value_holder.portfolio_current_value == decimal.Decimal(str(20)) # now includes USDT
 
 @pytest.mark.parametrize("backtesting_exchange_manager", ["spot", "futures"], indirect=True)
@@ -564,7 +564,7 @@ async def test_get_holdings_ratio_from_portfolio(backtesting_trader, currency, t
     exchange_manager.client_symbols.append("BTC/USDT")
     portfolio_value_holder.value_converter.last_prices_by_trading_pair["BTC/USDT"] = decimal.Decimal("1000")
     portfolio_value_holder.value_converter.missing_currency_data_in_exchange.discard("USDT")
-    portfolio_value_holder._sync_portfolio_current_value_using_available_currencies_values(init_price_fetchers=False)
+    portfolio_value_holder.sync_portfolio_current_value_using_available_currencies_values(init_price_fetchers=False)
     
     result = portfolio_value_holder._get_holdings_ratio_from_portfolio(
         currency, traded_symbols_only, include_assets_in_open_orders, coins_whitelist
@@ -598,7 +598,7 @@ async def test_get_total_holdings_value(backtesting_trader, coins_whitelist, tra
     exchange_manager.client_symbols.append("BTC/USDT")
     portfolio_value_holder.value_converter.last_prices_by_trading_pair["BTC/USDT"] = decimal.Decimal("1000")
     portfolio_value_holder.value_converter.missing_currency_data_in_exchange.discard("USDT")
-    portfolio_value_holder._sync_portfolio_current_value_using_available_currencies_values(init_price_fetchers=False)
+    portfolio_value_holder.sync_portfolio_current_value_using_available_currencies_values(init_price_fetchers=False)
     
     result = portfolio_value_holder._get_total_holdings_value(coins_whitelist, traded_symbols_only)
     
@@ -718,4 +718,118 @@ async def test_get_open_orders_value_for_symbol_multiple_orders(backtesting_trad
         
         assert isinstance(result, decimal.Decimal)
         assert result == decimal.Decimal("300")
+
+
+class TestSyncPortfolioCurrentValueIfNecessary:
+    pytestmark = []
+
+    def _portfolio_value_holder(self, supports_fetching_balance: bool):
+        holding = mock.Mock()
+        holding.total = constants.ONE
+        portfolio = mock.Mock()
+        portfolio.portfolio = {"BTC": holding}
+        portfolio_manager = mock.Mock()
+        portfolio_manager.portfolio = portfolio
+        exchange_manager = mock.Mock()
+        exchange_manager.exchange_name = "wizardswap"
+        exchange_manager.exchange = mock.Mock()
+        exchange_manager.exchange.supports_fetching_balance.return_value = (
+            supports_fetching_balance
+        )
+        portfolio_manager.exchange_manager = exchange_manager
+        with mock.patch(
+            "octobot_trading.personal_data.portfolios.portfolio_value_holder.value_converter.ValueConverter",
+            return_value=mock.Mock(),
+        ):
+            holder = personal_data.portfolios.portfolio_value_holder.PortfolioValueHolder(
+                portfolio_manager
+            )
+        holder.logger = mock.Mock()
+        return holder
+
+    def test_logs_info_when_balance_fetch_not_supported(self):
+        holder = self._portfolio_value_holder(supports_fetching_balance=False)
+        with mock.patch.object(
+            holder,
+            "sync_portfolio_current_value_using_available_currencies_values",
+        ), mock.patch(
+            "octobot_trading.personal_data.portfolios.portfolio_value_holder.exchanges.get_traded_assets",
+            return_value=["BTC"],
+        ):
+            holder._sync_portfolio_current_value_if_necessary()
+        holder.logger.info.assert_called_once()
+        holder.logger.error.assert_not_called()
+
+    def test_logs_error_when_balance_fetch_supported(self):
+        holder = self._portfolio_value_holder(supports_fetching_balance=True)
+        with mock.patch.object(
+            holder,
+            "sync_portfolio_current_value_using_available_currencies_values",
+        ), mock.patch(
+            "octobot_trading.personal_data.portfolios.portfolio_value_holder.exchanges.get_traded_assets",
+            return_value=["BTC"],
+        ):
+            holder._sync_portfolio_current_value_if_necessary()
+        holder.logger.error.assert_called_once()
+        holder.logger.info.assert_not_called()
+
+
+TICKER_WISE_SYMBOL = "BTC@BTC/USDT@ETH"
+
+
+def _portfolio_value_holder_without_value_converter(portfolio_manager=None):
+    if portfolio_manager is None:
+        portfolio_manager = mock.Mock()
+        portfolio_manager.exchange_manager = mock.Mock(exchange_name="binance")
+    value_converter_mock = mock.Mock(update_last_price=mock.Mock())
+    with mock.patch(
+        "octobot_trading.personal_data.portfolios.portfolio_value_holder.value_converter.ValueConverter",
+        return_value=value_converter_mock,
+    ):
+        holder = personal_data.portfolios.portfolio_value_holder.PortfolioValueHolder(portfolio_manager)
+    holder.logger = mock.Mock()
+    return holder, value_converter_mock
+
+
+class TestPortfolioValueHolderOriginValuesNetworkQualified:
+    pytestmark = []
+
+    def test_update_origin_crypto_currencies_values_uses_qualified_legs(self):
+        portfolio_manager = mock.Mock(reference_market="USDT@ETH")
+        portfolio_manager.exchange_manager = mock.Mock(exchange_name="binance")
+        holder, value_converter_mock = _portfolio_value_holder_without_value_converter(portfolio_manager)
+        holder.origin_crypto_currencies_values = {}
+        assert holder.update_origin_crypto_currencies_values(
+            TICKER_WISE_SYMBOL, decimal.Decimal("1")
+        ) is True
+        value_converter_mock.update_last_price.assert_called_once_with(
+            TICKER_WISE_SYMBOL, decimal.Decimal("1")
+        )
+
+
+class TestPortfolioValueHolderOrdersDeltaNetworkQualified:
+    pytestmark = []
+
+    def test_get_orders_delta_counts_buy_against_qualified_base(self):
+        portfolio_manager = mock.Mock()
+        portfolio_manager.exchange_manager = mock.Mock(
+            exchange_name="binance",
+            exchange_personal_data=mock.Mock(
+                orders_manager=mock.Mock(
+                    get_open_orders=mock.Mock(
+                        return_value=[
+                            mock.Mock(
+                                symbol=TICKER_WISE_SYMBOL,
+                                side=enums.TradeOrderSide.BUY,
+                                origin_quantity=decimal.Decimal("2"),
+                                total_cost=decimal.Decimal("0"),
+                            )
+                        ]
+                    )
+                )
+            ),
+        )
+        holder, _value_converter_mock = _portfolio_value_holder_without_value_converter(portfolio_manager)
+        delta = holder._get_orders_delta("BTC@BTC")
+        assert delta == decimal.Decimal("2")
 

@@ -15,11 +15,15 @@
 #  License along with this library.
 
 import pytest
+import mock
+
+import octobot_protocol.models as protocol_models
 
 from octobot_commons.tests.test_config import load_test_config
 
 from octobot_trading.api.exchange import create_exchange_builder, \
-    get_exchange_configurations_from_exchange_name, get_exchange_manager_from_exchange_name_and_id
+    get_exchange_configurations_from_exchange_name, get_exchange_manager_from_exchange_name_and_id, \
+    get_exchanges_availability, exchange_uses_network_qualified_markets
 from octobot_trading.exchanges.exchanges import Exchanges
 from tests.exchanges import exchange_manager
 from tests import event_loop
@@ -47,3 +51,30 @@ async def test_get_exchange_manager_from_exchange_name_and_id(exchange_manager):
         get_exchange_manager_from_exchange_name_and_id(exchange_manager.exchange_name, "test")
     with pytest.raises(KeyError):
         get_exchange_manager_from_exchange_name_and_id("bybit", exchange_manager.id)
+
+
+class TestExchangeUsesNetworkQualifiedMarkets:
+    pytestmark = []
+
+    def test_true_when_client_symbol_contains_network_separator(self):
+        exchange_manager = mock.Mock(client_symbols=["BTC@BTC/USDT@ETH"])
+        assert exchange_uses_network_qualified_markets(exchange_manager)
+
+    def test_false_for_plain_spot_pair(self):
+        exchange_manager = mock.Mock(client_symbols=["BTC/USDT"])
+        assert not exchange_uses_network_qualified_markets(exchange_manager)
+
+
+class TestGetExchangesAvailability:
+    @mock.patch("octobot_trading.exchanges.util.exchange_util.get_exchanges_availability")
+    def test_delegates_to_exchange_util(self, get_availabilities_mock):
+        expected_availabilities = [
+            protocol_models.ExchangeAvailability(
+                internal_name="binance",
+                name="Binance",
+                available_trading_types=[protocol_models.TradingType.SPOT],
+            )
+        ]
+        get_availabilities_mock.return_value = expected_availabilities
+        assert get_exchanges_availability() == expected_availabilities
+        get_availabilities_mock.assert_called_once_with()

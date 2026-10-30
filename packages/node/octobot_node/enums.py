@@ -32,9 +32,33 @@ class AutomationWorkflowActionTypes(enum.Enum):
 
 class AutomationWorkflowMessageTopics(enum.Enum):
     ACTIONS_UPDATE = "actions_update"
+    SIGNAL_EXECUTION_RESULT = "signal_execution_result"
 
 
 class SchedulerQueues(enum.Enum):
     AUTOMATION_WORKFLOW_QUEUE = "automation_workflow_queue"
     USER_ACTION_QUEUE = "user_action_queue"
     DBOS_CLEANUP_QUEUE = "dbos_cleanup_queue"
+    GLOBAL_VIEW_QUEUE = "global_view_queue"
+    PORTFOLIO_HISTORY_QUEUE = "portfolio_history_queue"
+
+
+class SchedulerWorkflowNames(enum.Enum):
+    EXECUTE_AUTOMATION = "execute_automation"
+    EXECUTE_USER_ACTION = "execute_user_action"
+    GLOBAL_VIEW_REFRESH = "global_view_refresh"
+    PORTFOLIO_HISTORY_COLLECTION = "portfolio_history_collection"
+    DBOS_CLEANUP = "dbos_cleanup"
+
+
+class UserActionSource(enum.Enum):
+    SYNC = "sync"
+    DEBUG_API = "debug_api"
+
+
+class SignalPriorityActionPayloadKeys(enum.Enum):
+    ACTIONS = "actions"
+    SIGNAL = "signal"
+    DSL_SCRIPT = "dsl_script"
+    ID = "id"
+    AWAIT_EXECUTION_RESULT = "await_execution_result"
