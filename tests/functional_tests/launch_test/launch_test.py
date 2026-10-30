@@ -45,6 +45,10 @@ async def test_run_bot():
         # Wait for actual readiness instead of spending ten of the twelve
         # seconds asleep while live market requests compete with CI startup.
         await bot.exchange_producer.created_all_exchanges.wait()
+        # Registration precedes evaluator/data initialization. The normal
+        # metadata task waits for those data events; stopping at registration
+        # alone races evaluator startup against exchange teardown.
+        await bot._init_metadata_run_task
         assert bot.initialized
         assert bot.exchange_producer.exchange_manager_ids
         assert (
