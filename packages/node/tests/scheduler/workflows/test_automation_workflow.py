@@ -2035,7 +2035,7 @@ class TestExecuteAutomationBestEffortOutputState:
         mock_iteration = mock.AsyncMock(
             return_value=iteration_result.to_dict(include_default_values=False)
         )
-        mock_process = mock.AsyncMock()
+        mock_process = mock.AsyncMock(return_value=(False, iteration_result))
 
         with mock.patch.object(
             octobot_node.scheduler.workflows.automation_workflow.AutomationWorkflow,
@@ -2060,7 +2060,7 @@ class TestExecuteAutomationBestEffortOutputState:
         assert parsed_output.state == task_content
         assert parsed_output.error == terminal_error
         assert parsed_output.error_message == "no signal"
-        mock_process.assert_not_called()
+        mock_process.assert_awaited_once()
 
     @pytest.mark.asyncio
     @required_imports
@@ -2457,6 +2457,81 @@ class TestWaitAndTriggerOnActionsUpdate:
 
 
 class TestProcessPendingPriorityActionsAndReschedule:
+    @pytest.mark.asyncio
+    async def test_postponed_missing_signal_keeps_its_scheduled_retry(
+        self, import_automation_workflow, parsed_inputs, iteration_result
+    ):
+        workflow = octobot_node.scheduler.workflows.automation_workflow.AutomationWorkflow
+        iteration_result.progress_status.postponed_iteration = True
+        iteration_result.progress_status.error = octobot_flow.enums.ActionErrorStatus.NO_TRADING_SIGNAL.value
+        mock_schedule = mock.AsyncMock()
+        with (
+            mock.patch.object(workflow, "_wait_and_trigger_on_actions_update", mock.AsyncMock(return_value=None)),
+            mock.patch.object(workflow, "_schedule_next_iteration", mock_schedule),
+        ):
+            should_continue, _ = await workflow._process_pending_priority_actions_and_reschedule(
+                parsed_inputs, iteration_result
+            )
+        assert should_continue is True
+        mock_schedule.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_missing_signal_consumes_a_late_queued_signal_once(
+        self, import_automation_workflow, parsed_inputs, iteration_result
+    ):
+        workflow = octobot_node.scheduler.workflows.automation_workflow.AutomationWorkflow
+        missing_signal_result = copy.deepcopy(iteration_result)
+        missing_signal_result.has_next_actions = False
+        missing_signal_result.next_iteration_description = None
+        missing_signal_result.progress_status.error = octobot_flow.enums.ActionErrorStatus.NO_TRADING_SIGNAL.value
+        signal_update = _trading_signal_update_envelope([{"strategy_id": "late-signal"}])
+        original_content = parsed_inputs.task.content
+        mock_wait = mock.AsyncMock(side_effect=[signal_update, None])
+        mock_iteration = mock.AsyncMock(return_value=iteration_result.to_dict(include_default_values=False))
+        mock_schedule = mock.AsyncMock()
+        with (
+            mock.patch.object(workflow, "_wait_and_trigger_on_actions_update", mock_wait),
+            mock.patch.object(workflow, "execute_iteration", mock_iteration),
+            mock.patch.object(workflow, "_schedule_next_iteration", mock_schedule),
+        ):
+            should_continue, updated_result = await workflow._process_pending_priority_actions_and_reschedule(
+                parsed_inputs, missing_signal_result
+            )
+        assert should_continue is True
+        assert updated_result.progress_status.error is None
+        mock_iteration.assert_awaited_once()
+        assert mock_iteration.await_args.args[0]["task"]["content"] == original_content
+        assert mock_iteration.await_args.args[1] == signal_update
+        mock_schedule.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("forced_trigger", [False, True])
+    async def test_missing_signal_still_stops_without_a_substantive_update(
+        self, import_automation_workflow, parsed_inputs, iteration_result, forced_trigger
+    ):
+        workflow = octobot_node.scheduler.workflows.automation_workflow.AutomationWorkflow
+        iteration_result.has_next_actions = False
+        iteration_result.next_iteration_description = None
+        iteration_result.progress_status.error = octobot_flow.enums.ActionErrorStatus.NO_TRADING_SIGNAL.value
+        pending = [_forced_trigger_update_envelope(), None] if forced_trigger else [None]
+        mock_wait = mock.AsyncMock(side_effect=pending)
+        mock_iteration = mock.AsyncMock()
+        mock_schedule = mock.AsyncMock()
+        with (
+            mock.patch.object(workflow, "_wait_and_trigger_on_actions_update", mock_wait),
+            mock.patch.object(workflow, "execute_iteration", mock_iteration),
+            mock.patch.object(workflow, "_schedule_next_iteration", mock_schedule),
+        ):
+            should_continue, updated_result = await workflow._process_pending_priority_actions_and_reschedule(
+                parsed_inputs, iteration_result
+            )
+        assert should_continue is False
+        assert updated_result is iteration_result
+        assert updated_result.progress_status.error == octobot_flow.enums.ActionErrorStatus.NO_TRADING_SIGNAL.value
+        assert mock_wait.await_count == len(pending)
+        mock_iteration.assert_not_awaited()
+        mock_schedule.assert_not_awaited()
+
     @pytest.mark.asyncio
     async def test_process_pending_returns_false_when_no_next_iteration(self, import_automation_workflow, parsed_inputs, iteration_result):
         iteration_result.has_next_actions = False

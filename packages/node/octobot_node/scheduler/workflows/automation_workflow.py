@@ -93,6 +93,7 @@ class AutomationWorkflow:
             continue_workflow = False
             if (
                 iteration_result.progress_status.postponed_iteration
+                or AutomationWorkflow._has_recoverable_missing_signal(iteration_result)
                 or AutomationWorkflow._should_continue_workflow(
                     parsed_inputs, iteration_result.progress_status, bool(actions_update)
                 )
@@ -128,6 +129,15 @@ class AutomationWorkflow:
                 error_message=str(err),
             )
         return json.dumps(output.to_dict(include_default_values=False)) if output else None
+
+    @staticmethod
+    def _has_recoverable_missing_signal(iteration_result: params.AutomationWorkflowIterationResult) -> bool:
+        """Allow already-queued input to repair a signal fetch, while preserving stop requests."""
+        return (
+            not iteration_result.progress_status.should_stop
+            and not iteration_result.progress_status.postponed_iteration
+            and iteration_result.progress_status.error == octobot_flow.enums.ActionErrorStatus.NO_TRADING_SIGNAL.value
+        )
 
     @staticmethod
     def _best_effort_workflow_output_state(
@@ -614,6 +624,7 @@ class AutomationWorkflow:
         if (
             not previous_iteration_result.has_next_actions
             and not previous_iteration_result.progress_status.postponed_iteration
+            and not AutomationWorkflow._has_recoverable_missing_signal(previous_iteration_result)
         ):
             return False, previous_iteration_result
         # In case new priority actions were sent, execute them now.
@@ -627,9 +638,16 @@ class AutomationWorkflow:
                     "Ignoring forced_trigger received after iteration completed; skipping duplicate iteration."
                 )
                 continue
+            # A failed fetch may have no output snapshot. Preserve the input
+            # state when processing a signal queued after the initial recv;
+            # terminating here would discard that durable, unconsumed input.
+            next_description, next_metadata = AutomationWorkflow._best_effort_workflow_output_state(
+                parsed_inputs, latest_iteration_result
+            )
+            if next_description is None:
+                return False, latest_iteration_result
             extra_iteration_inputs = AutomationWorkflow._create_next_iteration_inputs(
-                parsed_inputs, latest_iteration_result.next_iteration_description, 0,
-                latest_iteration_result.next_iteration_description_metadata,
+                parsed_inputs, next_description, 0, next_metadata,
             )
             # execute the iteration on the updated state from last iteration
             raw_iteration_result = await AutomationWorkflow.execute_iteration(extra_iteration_inputs, new_actions_update)
@@ -642,6 +660,13 @@ class AutomationWorkflow:
                 raise errors.WorkflowPriorityActionExecutionError(
                     f"Unexpected error: no next iteration description after processing priority actions: {latest_iteration_result}"
                 )
+        if AutomationWorkflow._has_recoverable_missing_signal(latest_iteration_result):
+            # No substantive queued update repaired the fetch. Keep the
+            # original terminal error; a forced trigger must not retry it.
+            AutomationWorkflow._should_continue_workflow(
+                parsed_inputs, latest_iteration_result.progress_status, False
+            )
+            return False, latest_iteration_result
         if latest_iteration_result.progress_status.should_stop:
             AutomationWorkflow.get_logger(parsed_inputs).info(
                 f"Stopping workflow, should stop: {latest_iteration_result.progress_status.should_stop}"
