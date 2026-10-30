@@ -485,10 +485,12 @@ jobs:
           printf '%s\n' '{"profile":"default","accepted_terms":true,"distribution":"default","exchanges":{},"services":{"web":{"auto-open-in-web-browser":false}},"notification":{}}' > "$runtime_user/config.json"
           # Match the production Ansible profile: default Node mode disables
           # the standalone browser interface that this health check verifies.
+          # Isolated CI runtimes have no user-systemd socket for timer units.
+          # Keep the health command and run it explicitly after startup below.
           "${CONTAINER_RUNTIME}" run --detach \
             --network none \
             --health-cmd 'curl --fail --silent --show-error --max-time 5 http://127.0.0.1:5001/ >/dev/null' \
-            --health-interval 15s \
+            --health-interval disable \
             --health-timeout 10s \
             --health-retries 5 \
             --volume "${runtime_tentacles}:/octobot/tentacles:Z" \
