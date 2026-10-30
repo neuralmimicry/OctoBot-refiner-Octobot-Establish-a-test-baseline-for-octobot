@@ -6,8 +6,12 @@ if [[ "${1:-}" == --prepare ]]; then
   # Podman rejects runroots longer than 50 characters. RUNNER_TEMP on the
   # estate already exceeds that limit; mktemp also keeps parallel jobs isolated.
   task_root="$(mktemp -d /var/tmp/cp.XXXXXXXXXXXX)"
-  mkdir -p "${task_root}/runtime" "${task_root}/runroot" "${task_root}/storage"
-  chmod 700 "${task_root}" "${task_root}/runtime" "${task_root}/runroot" "${task_root}/storage"
+  # Ubuntu's pasta AppArmor profile permits namespace files below /tmp.
+  # Keep only small runtime files there; image layers remain on disk in /var/tmp.
+  network_runtime="$(mktemp -d /tmp/cpr.XXXXXXXXXXXX)"
+  printf '%s\n' "$network_runtime" >"${task_root}/runtime-path"
+  mkdir -p "${task_root}/runroot" "${task_root}/storage"
+  chmod 700 "${task_root}" "$network_runtime" "${task_root}/runroot" "${task_root}/storage"
   cat >"${task_root}/storage.conf" <<EOF
 [storage]
 driver = "overlay"
@@ -17,7 +21,7 @@ graphroot = "${task_root}/storage"
 mount_program = "/usr/bin/fuse-overlayfs"
 EOF
   test -x /usr/bin/fuse-overlayfs
-  export XDG_RUNTIME_DIR="${task_root}/runtime"
+  export XDG_RUNTIME_DIR="$network_runtime"
   export CONTAINERS_STORAGE_CONF="${task_root}/storage.conf"
   export REGISTRY_AUTH_FILE="${task_root}/auth.json"
   export CONDUCTOR_PODMAN_ROOT="${task_root}"
@@ -35,9 +39,12 @@ if [[ "${1:-}" == --cleanup ]]; then
   [[ -d "$CONDUCTOR_PODMAN_ROOT" && ! -L "$CONDUCTOR_PODMAN_ROOT" ]]
   [[ "$(stat -c %u "$CONDUCTOR_PODMAN_ROOT")" == "$(id -u)" ]]
   [[ "$CONTAINERS_STORAGE_CONF" == "$CONDUCTOR_PODMAN_ROOT/storage.conf" ]]
-  [[ "$XDG_RUNTIME_DIR" == "$CONDUCTOR_PODMAN_ROOT/runtime" ]]
+  [[ "$XDG_RUNTIME_DIR" =~ ^/tmp/cpr\.[[:alnum:]]{12}$ ]]
+  [[ -d "$XDG_RUNTIME_DIR" && ! -L "$XDG_RUNTIME_DIR" ]]
+  [[ "$(stat -c %u "$XDG_RUNTIME_DIR")" == "$(id -u)" ]]
+  [[ "$XDG_RUNTIME_DIR" == "$(cat "$CONDUCTOR_PODMAN_ROOT/runtime-path")" ]]
   "$0" system reset --force
-  rm -rf -- "$CONDUCTOR_PODMAN_ROOT"
+  rm -rf -- "$CONDUCTOR_PODMAN_ROOT" "$XDG_RUNTIME_DIR"
   exit
 fi
 exec podman --cgroup-manager=cgroupfs --root "${CONDUCTOR_PODMAN_ROOT}/storage" \
