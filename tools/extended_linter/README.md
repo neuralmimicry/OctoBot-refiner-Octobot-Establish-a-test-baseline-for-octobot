@@ -19,6 +19,18 @@ python -m tools.extended_linter --base origin/dev --continue
 
 Policy file: [`config/policy.yaml`](config/policy.yaml).
 
+Policy schema 2 adds rule-local `exclude_globs`; schema 1 remains readable.
+The bundled exemptions identify declared build environments, documentation
+that describes prohibited commands and negative linter fixtures imported from
+upstream. They do not exempt application runtime code, other rules in the same
+file, or actual environment/credential files. The one existing placeholder
+exchange template is named explicitly. Regression tests retain the prohibitions
+for runtime paths and other environment filenames.
+
+CI fetches complete history and preserves the policy command's failure through
+its report pipeline. Resolving a base ref alone is insufficient: a missing
+common ancestor, including a shallow boundary, fails before diff inspection.
+
 ## CI vs local / agents
 
 | Context | Install | Tentacles hook |

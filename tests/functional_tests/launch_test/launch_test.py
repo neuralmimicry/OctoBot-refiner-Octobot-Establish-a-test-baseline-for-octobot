@@ -27,10 +27,12 @@ from octobot.octobot import OctoBot
 import octobot.community as community
 
 
-# Allow distinct startup, ten-second operation and shutdown budgets. The old
-# twelve-second total could expire before shutdown even began. A thread-based
-# outer deadline also terminates pytest if a broken teardown ignores cancellation.
-@pytest.mark.timeout(35, method="thread")
+# Venue-backed initialization can perform several sequential network reads.
+# Native CI observed a single market reload exceeding eleven seconds, so the
+# readiness budget must not assume the whole startup fits within ten seconds.
+# Keep the original ten-second observation window and bounded cleanup distinct.
+# A thread deadline also terminates a teardown that ignores cancellation.
+@pytest.mark.timeout(85, method="thread")
 @pytest.mark.asyncio
 async def test_run_bot():
     # use custom logs folder
@@ -43,7 +45,7 @@ async def test_run_bot():
     bot = OctoBot(config, ignore_config=True)
     bot.task_manager.init_async_loop()
     try:
-        async with asyncio.timeout(10):
+        async with asyncio.timeout(60):
             await start_bot(bot, init_logger(logs_folder=logs_folder))
             # Exchange construction and evaluator/data initialization continue
             # in channel tasks after initialize returns.

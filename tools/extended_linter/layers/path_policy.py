@@ -1,4 +1,3 @@
-import fnmatch
 import typing
 
 import tools.extended_linter.domain.models as domain_models
@@ -6,14 +5,7 @@ import tools.extended_linter.domain.paths as domain_paths
 
 
 def _matches_glob(path: str, pattern: str) -> bool:
-    normalized = domain_paths.normalize_path(path)
-    if pattern.endswith("/**"):
-        prefix = pattern[:-3]
-        if normalized == prefix or normalized.startswith(prefix + "/"):
-            return True
-    if "/" not in pattern and "*" not in pattern:
-        return normalized == pattern
-    return fnmatch.fnmatch(normalized, pattern)
+    return domain_paths.matches_glob(path, pattern)
 
 
 def _is_repo_root_tentacles(path: str) -> bool:
@@ -34,6 +26,8 @@ def run(
         kind = rule.get("kind")
         globs = rule.get("globs") or []
         for path in changed_paths:
+            if any(_matches_glob(path, pattern) for pattern in rule.get("exclude_globs") or []):
+                continue
             matched = False
             if kind == "repo_root_tentacles":
                 matched = _is_repo_root_tentacles(path)

@@ -19,7 +19,7 @@ def verify_merge_base(
             hint = rule.get("hint", hint)
             break
     result = subprocess.run(
-        ["git", "rev-parse", "--verify", base_ref],
+        ["git", "merge-base", "HEAD", base_ref],
         cwd=repo_root,
         capture_output=True,
         text=True,
@@ -32,7 +32,7 @@ def verify_merge_base(
                 file="",
                 line=None,
                 hint=hint,
-                detail=result.stderr.strip() or f"unknown ref {base_ref}",
+                detail=result.stderr.strip() or f"no common history with {base_ref}",
             )
         )
     return violations
@@ -49,8 +49,10 @@ def list_changed_paths(
         text=True,
         check=False,
     )
-    if merge_base.returncode != 0:
-        return [], merge_base.stderr.strip()
+    if merge_base.returncode != 0 or not merge_base.stdout.strip():
+        # An empty revision turns the following comparison into ...HEAD,
+        # which Git accepts as an empty diff. Never report that as a pass.
+        raise RuntimeError(merge_base.stderr.strip() or "merge base unavailable")
     merge_base_sha = merge_base.stdout.strip()
     name_only = subprocess.run(
         ["git", "diff", "--name-only", f"{merge_base_sha}...HEAD"],

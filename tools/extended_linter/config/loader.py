@@ -20,6 +20,6 @@ def load_policy(policy_path: pathlib.Path | None = None) -> dict[str, typing.Any
         data = yaml.safe_load(policy_file)
     if not isinstance(data, dict):
         raise PolicyLoadError("policy root must be a mapping")
-    if data.get("policy_version") != 1:
+    if data.get("policy_version") not in (1, 2):
         raise PolicyLoadError("unsupported policy_version")
     return data

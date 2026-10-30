@@ -24,7 +24,7 @@ flowchart TB
 ```
 
 1. **Load policy** — `config.loader.load_policy`
-2. **Git layer** — verify `--base` ref; list changed paths + unified diff
+2. **Git layer** — require an actual merge base with `--base`; fail on inaccessible history before listing changed paths + unified diff
 3. **Tentacles hook** — if `packages/tentacles/**` in diff, run `reinstall-tentacles.sh` (not a policy violation). Requires cloud install / `env.sh`. **CI** passes `--skip-tentacles-reinstall`; agents run the hook by default.
 4. **Path layer** — `layers.path_policy.run(changed_paths, policy)`
 5. **Agent docs layer** — `layers.agent_docs_policy.run(...)` for policy `path_globs` (AGENTS.md, `.cursor/skills/**/SKILL.md`, `.cursor/rules/**`, tools README/ARCHITECTURE, etc.): shrink / Last reviewed vs merge-base; uses `git show` like `git_scope`
@@ -67,3 +67,7 @@ flowchart TB
 
 - Stable `rule_id` per rule; one test per catalog `rule_id` in `tools/tests/extended_linter/layers/test_policy_rules_catalog.py`.
 - Bump `policy_version` only when YAML schema changes.
+- Schema 2 adds optional rule-local `exclude_globs` for path/diff rules. The
+  shared domain path matcher gives denies and exemptions identical semantics.
+  Each exemption leaves other rules active; runtime negative controls belong
+  beside fixture-exemption tests. Schema 1 remains supported for existing callers.

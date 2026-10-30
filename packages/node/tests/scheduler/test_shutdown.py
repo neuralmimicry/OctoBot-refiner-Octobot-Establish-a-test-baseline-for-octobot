@@ -17,9 +17,11 @@ import pytest
 import mock
 
 import octobot_node.scheduler as scheduler_module
+import tests.scheduler as scheduler_test_util
 
 
 pytestmark = pytest.mark.asyncio
+temp_dbos_scheduler = scheduler_test_util.temp_dbos_scheduler
 
 
 @pytest.fixture(autouse=True)
@@ -42,7 +44,9 @@ class TestShutdownSchedulerAndTradingSignalChannel:
                 await scheduler_module.shutdown_scheduler_and_trading_signal_channel()
         stop_mock.assert_not_called()
 
-    async def test_initialize_scheduler_resets_shutdown_guard(self):
+    async def test_initialize_scheduler_resets_shutdown_guard(self, temp_dbos_scheduler):
+        # Register genuine DBOS decorators before replacing the instance. A
+        # first import under Mock permanently contaminates this worker's cache.
         init_call_order: list[str] = []
 
         def track_start() -> None:
@@ -85,3 +89,8 @@ class TestShutdownSchedulerAndTradingSignalChannel:
             "register_queues",
             "register_schedules",
         ]
+        # Importing schedules while INSTANCE is mocked must not leave cached
+        # workflow classes decorated by mocks for later SQLite integration tests.
+        assert not isinstance(
+            schedules_module.global_view_workflow.GlobalViewRefreshWorkflow, mock.Mock
+        )

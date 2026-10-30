@@ -1,4 +1,4 @@
-policy_version: 1
+policy_version: 2
 
 git_rules:
   - rule_id: git.merge_base_missing
@@ -14,6 +14,10 @@ path_rules:
       - "**/user/**"
     hint: User data is local; not for PRs
   - rule_id: path.deny_dotenv
+    # Upstream's committed fixture contains placeholder exchange variables.
+    # Actual .env files, other templates and user credentials remain denied.
+    exclude_globs:
+      - "additional_tests/exchanges_tests/.env.template"
     globs:
       - ".env"
       - ".env.*"
@@ -65,6 +69,15 @@ agent_docs_rules:
 
 diff_rules:
   - rule_id: diff.no_pip_install
+    # These are declared build environments, policy documentation and negative
+    # test fixtures. Runtime application code receives no exemption.
+    exclude_globs:
+      - ".cursor/cloud-install.sh"
+      - ".cursor/rules/octobot-cloud.mdc"
+      - ".cursor/skills/cloud-roadmap/SKILL.md"
+      - ".cursor/skills/octobot-cloud/SKILL.md"
+      - ".github/workflows/main.yml"
+      - "tools/tests/extended_linter/**"
     patterns:
       - '\bpip3?\s+install\b'
       - '\buv\s+pip\s+install\b'
@@ -72,24 +85,41 @@ diff_rules:
       - '\bconda\s+install\b'
     hint: Add deps via requirements / BUILD; no install in code or scripts in PR
   - rule_id: diff.no_npm_install
+    exclude_globs:
+      - ".cursor/rules/octobot-cloud.mdc"
+      - ".cursor/skills/cloud-roadmap/SKILL.md"
+      - ".cursor/skills/octobot-cloud/SKILL.md"
+      - "packages/protocol/AGENTS.md"
+      - "packages/tentacles/Services/Interfaces/node_web_interface/README.md"
+      - "tools/extended_linter/layers/diff_policy.py"
+      - "tools/tests/extended_linter/**"
     patterns:
       - '\bnpm\s+install\b'
       - '\byarn\s+add\b'
       - '\bpnpm\s+add\b'
     hint: Use package.json / lockfile workflow
   - rule_id: diff.no_git_force_push
+    exclude_globs:
+      - "tools/tests/extended_linter/**"
     patterns:
       - 'push\s+--force'
       - 'push\s+-f\b'
     hint: No force-push in docs/scripts/commits
   - rule_id: diff.no_bare_except
+    exclude_globs:
+      - "tools/tests/extended_linter/**"
     patterns:
       - 'except\s*:'
     hint: Catch specific exceptions
   - rule_id: diff.no_subprocess_pip
+    exclude_globs:
+      - "tools/tests/extended_linter/**"
     kind: subprocess_package_manager
     hint: No runtime package installs
   - rule_id: diff.no_disable_verify
+    exclude_globs:
+      - "tools/extended_linter/config/policy.yaml"
+      - "tools/tests/extended_linter/**"
     patterns:
       - '--no-verify'
       - '--no-gpg-sign'

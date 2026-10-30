@@ -2,6 +2,7 @@ import re
 import typing
 
 import tools.extended_linter.domain.models as domain_models
+import tools.extended_linter.domain.paths as domain_paths
 
 
 def _iter_added_lines(diff_text: str) -> list[tuple[str, int, str]]:
@@ -28,7 +29,7 @@ def _iter_added_lines(diff_text: str) -> list[tuple[str, int, str]]:
 
 
 def _subprocess_package_manager_line(line: str) -> bool:
-    if "subprocess" not in line:
+    if not re.search(r"\bsubprocess\.(?:run|Popen|call|check_call|check_output)\s*\(", line):
         return False
     lowered = line.lower()
     return "pip" in lowered or "npm install" in lowered
@@ -47,6 +48,11 @@ def run(
         patterns = rule.get("patterns") or []
         compiled = [re.compile(pattern) for pattern in patterns]
         for file_path, line_no, content in added_lines:
+            if any(
+                domain_paths.matches_glob(file_path, pattern)
+                for pattern in rule.get("exclude_globs") or []
+            ):
+                continue
             matched = False
             if kind == "subprocess_package_manager":
                 matched = _subprocess_package_manager_line(content)
