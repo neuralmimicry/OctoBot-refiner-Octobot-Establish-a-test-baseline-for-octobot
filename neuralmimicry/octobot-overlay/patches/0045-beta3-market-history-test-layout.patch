@@ -1,0 +1,13 @@
+diff --git a/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_market_history.py b/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_market_history.py
+index 7a992d3d1c5da0bb42412642d4a70faa0c663721..692a35fbcd982c0da9ca77705be1ae17efaf6edc 100644
+--- a/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_market_history.py
++++ b/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_market_history.py
+@@ -9,7 +9,7 @@ import pytest
+ import octobot.enums
+ import tentacles.Services.Interfaces.web_interface.api.market_history as history
+ import tentacles.Services.Interfaces.web_interface.tests as web_tests
+-import tentacles.Services.Interfaces.web_interface.tests.distribution_tester as distribution_tester
++import tentacles.Services.Interfaces.web_interface.tests.models.distributions.distribution_tester as distribution_tester
+ 
+ 
+ def test_history_excludes_unfinished_candle_and_preserves_open_times():

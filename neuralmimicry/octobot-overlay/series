@@ -50,3 +50,4 @@ patches/0041-arm64-baselines-and-offline-wallet-tests.patch tests
 patches/0042-public-candle-history.patch build
 patches/0043-candle-route-crawler-contract.patch tests modern-web-tests
 patches/0044-candle-route-crawler-contract-legacy.patch tests legacy-web-tests
+patches/0045-beta3-market-history-test-layout.patch tests legacy-web-tests
