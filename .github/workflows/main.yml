@@ -124,6 +124,7 @@ jobs:
     name: ${{ matrix.os }}${{ matrix.arch }} - Python ${{ matrix.version }} - ${{ matrix.package }}
     runs-on: [self-hosted, Linux, X64]
     strategy:
+      fail-fast: false
       matrix:
         os: [ ubuntu-latest ]
         arch: [ x64 ]

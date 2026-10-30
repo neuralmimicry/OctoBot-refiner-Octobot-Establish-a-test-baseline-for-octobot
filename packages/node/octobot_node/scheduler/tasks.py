@@ -212,7 +212,7 @@ def _terminal_workflow_confirms_stop(workflow_status: typing.Any) -> bool:
     if workflow_output is None or workflow_output.error or not workflow_output.state:
         return False
     try:
-        state = workflows_util.get_automation_dict(workflow_output.state)["state"]
+        state = automation_states_loader.get_automation_dict(workflow_output.state)["state"]
         automation = state["automation"]
     except (KeyError, TypeError, ValueError):
         return False
