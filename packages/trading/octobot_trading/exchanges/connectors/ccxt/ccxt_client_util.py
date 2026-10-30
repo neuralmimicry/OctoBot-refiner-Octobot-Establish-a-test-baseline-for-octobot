@@ -72,7 +72,12 @@ def create_client(
             )
             if keys_adapter:
                 creds = keys_adapter(creds)
-            if not (creds.has_credentials()) and not exchange_manager.is_simulated and not exchange_manager.ignore_config:
+            if (
+                not creds.has_credentials()
+                and not exchange_manager.is_simulated
+                and not exchange_manager.ignore_config
+                and _exchange_class_requires_api_credentials(exchange_class)
+            ):
                 logger.warning(f"No exchange API key set for {exchange_manager.exchange_name}. "
                                f"Enter your account details to enable real trading on this exchange.")
             if should_be_authenticated_exchange:
@@ -150,12 +155,28 @@ def set_sandbox_mode(exchange_connector, is_sandboxed):
             exchange_connector.client.enable_demo_trading(is_sandboxed)
         else:
             exchange_connector.client.set_sandbox_mode(is_sandboxed)
-    except ccxt.NotSupported as e:
+    except ccxt.NotSupported as err:
         default_type = exchange_connector.client.options.get('defaultType', None)
         additional_info = f" in type {default_type}" if default_type else ""
-        exchange_connector.logger.warning(f"{exchange_connector.name} does not support sandboxing {additional_info}: {e}")
+        message = (
+            f"{exchange_connector.name} does not support sandboxing{additional_info}: "
+            f"sandbox/test URLs are unavailable ({err})"
+        )
+        exchange_connector.logger.warning(message)
         # raise exception to stop this exchange and prevent dealing with a real funds exchange
-        raise e
+        raise ccxt.NotSupported(message) from err
+    except TypeError as err:
+        # ccxt raises TypeError when urls['test'] is None (sandbox endpoints missing).
+        if is_sandboxed:
+            default_type = exchange_connector.client.options.get('defaultType', None)
+            additional_info = f" in type {default_type}" if default_type else ""
+            message = (
+                f"{exchange_connector.name} does not support sandboxing{additional_info}: "
+                f"sandbox/test URLs are unavailable ({err})"
+            )
+            exchange_connector.logger.warning(message)
+            # raise exception to stop this exchange and prevent dealing with a real funds exchange
+            raise ccxt.NotSupported(message) from err
     return None
 
 
@@ -309,6 +330,8 @@ def converted_ccxt_common_errors(f):
     async def converted_ccxt_common_errors_wrapper(*args, **kwargs):
         try:
             return await f(*args, **kwargs)
+        except ccxt.BadSymbol as err:
+            raise errors.UnSupportedSymbolError(err) from err
         except ccxt.RateLimitExceeded as err:
             raise errors.RateLimitExceeded(err) from err
         except ccxt.NotSupported as err:
@@ -504,8 +527,12 @@ def _use_request_counter(
 
 def ccxt_exchange_class_factory(exchange_name):
     # Prefer OctoBot-specific ccxt subclasses (async_support.ob_<id>) when exported.
-    if not exchange_name.startswith("ob_"):
-        if ob_subclass := getattr(async_ccxt, f"ob_{exchange_name}", None):
+    if not exchange_name.startswith(constants.OB_EXCHANGE_PREFIX):
+        if ob_subclass := getattr(
+            async_ccxt,
+            f"{constants.OB_EXCHANGE_PREFIX}{exchange_name}",
+            None,
+        ):
             return ob_subclass
     return getattr(async_ccxt, exchange_name)
 
@@ -554,6 +581,11 @@ def get_option_value_from_new_ccxt_client(
 ) -> typing.Union[bool, float, int, str, None]:
     ex_class = ccxt_exchange_class_factory(exchange)
     return get_option_value(ex_class(), option_key)
+
+
+@cachetools.cached(cachetools.LRUCache(maxsize=32))
+def _exchange_class_requires_api_credentials(exchange_class: type) -> bool:
+    return any(exchange_class().requiredCredentials.values())
 
 
 def get_option_value(

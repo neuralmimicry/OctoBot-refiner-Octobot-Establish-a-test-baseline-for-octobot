@@ -39,9 +39,14 @@ jobs:
 
       - uses: actions/checkout@v6
         with:
-          sparse-checkout: neuralmimicry
+          fetch-depth: 0
+          sparse-checkout: |
+            neuralmimicry
+            octobot
       - name: Apply overlay to a fresh upstream checkout twice
-        run: neuralmimicry/octobot-overlay/selftest.sh
+        run: |
+          neuralmimicry/verify-upstream-release.sh
+          neuralmimicry/octobot-overlay/selftest.sh
 
   build:
     needs: [ overlay ]
@@ -86,7 +91,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version-file: packages/tentacles/Services/Interfaces/node_web_interface/.nvmrc
+          node-version-file: .nvmrc
 
       - name: Install Rust toolchain
         if: hashFiles('packages/*/crates/*/Cargo.toml') != ''
@@ -119,6 +124,7 @@ jobs:
     name: ${{ matrix.os }}${{ matrix.arch }} - Python ${{ matrix.version }} - ${{ matrix.package }}
     runs-on: [self-hosted, Linux, X64]
     strategy:
+      fail-fast: false
       matrix:
         os: [ ubuntu-latest ]
         arch: [ x64 ]
@@ -185,12 +191,16 @@ jobs:
         echo "$octobot_venv/bin" >> "$GITHUB_PATH"
         echo "VIRTUAL_ENV=$octobot_venv" >> "$GITHUB_ENV"
         echo "PIP_REQUIRE_VIRTUALENV=true" >> "$GITHUB_ENV"
+        # Install locks protect each workspace, so shared-host jobs also need
+        # private extraction/requirements paths instead of the /tmp defaults.
+        echo "OCTOBOT_TENTACLES_INSTALL_TEMP_DIR=$octobot_venv/tentacles-install" >> "$GITHUB_ENV"
+        echo "OCTOBOT_TENTACLES_REQUIREMENTS_INSTALL_TEMP_DIR=$octobot_venv/tentacles-requirements" >> "$GITHUB_ENV"
 
     - name: Set up Node.js
       if: env.USES_TENTACLES == 'true'
       uses: actions/setup-node@v6
       with:
-        node-version-file: packages/tentacles/Services/Interfaces/node_web_interface/.nvmrc
+        node-version-file: .nvmrc
 
     - name: Download build wheel artifact
       uses: actions/download-artifact@v8
@@ -230,10 +240,9 @@ jobs:
 
     - name: Build web client SDK
       if: env.USES_TENTACLES == 'true'
-      working-directory: packages/client/octobot_client_ts
       run: |
         npm ci
-        npm run build
+        npm run build -w packages/client/octobot_client_ts
 
     - name: Install tentacles
       if: env.USES_TENTACLES == 'true'
@@ -283,6 +292,82 @@ jobs:
           npm test
           cd - > /dev/null
         done
+
+  extended_linter:
+    name: extended_linter
+    needs: [ build ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.x"
+
+      - name: Download build wheel artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: octobot-wheel
+          path: dist/
+
+      - name: Install OctoBot
+        run: |
+          pip install -r dev_requirements.txt
+          pip install dist/*.whl
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Build web client SDK
+        run: |
+          npm ci
+          npm run build -w packages/client/octobot_client_ts
+
+      - name: Install tentacles
+        env:
+          ALLOW_UNSIGNED_TENTACLES: "true"
+        run: |
+          mkdir -p output
+          OctoBot tentacles -d packages/tentacles -p any_platform.zip
+          OctoBot tentacles --install --location output/any_platform.zip --all
+
+      - name: tools tests
+        run: PYTHONPATH=.:$PYTHONPATH pytest tools/tests -q
+
+      - name: Fetch base branch
+        if: github.event_name == 'pull_request'
+        run: git fetch origin ${{ github.base_ref }}
+
+      - name: PR policy check
+        if: github.event_name == 'pull_request'
+        id: linter
+        run: |
+          set -o pipefail
+          PYTHONPATH=. python -m tools.extended_linter \
+            --base origin/${{ github.base_ref }} \
+            --continue \
+            --skip-tentacles-reinstall \
+            --write-report-json extended-linter.json | tee extended-linter.txt
+
+      - name: Upload extended_linter report on failure
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: extended-linter-report
+          path: |
+            extended-linter.txt
+            extended-linter.json
+
+      - name: Step summary on failure
+        if: failure() && github.event_name == 'pull_request'
+        run: |
+          echo "## extended_linter failed" >> "$GITHUB_STEP_SUMMARY"
+          cat extended-linter.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
 
   docker:
     name: Build and test container image (${{ matrix.arch }})
@@ -364,7 +449,7 @@ jobs:
           OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]' | tr -d '-')"
           IMG=octobot-refiner
           {
-            echo "VERSION=${GITHUB_REF##*/}"
+            echo "VERSION=$(sed -n 's/^release=//p' neuralmimicry/octobot-overlay/UPSTREAM)"
             echo "IMAGE=ghcr.io/${OWNER}/${IMG}"
             echo "ARCH=${{ matrix.arch }}"
             echo "PLATFORM=${{ matrix.platform }}"
@@ -403,6 +488,8 @@ jobs:
           echo "$octobot_venv/bin" >> "$GITHUB_PATH"
           echo "VIRTUAL_ENV=$octobot_venv" >> "$GITHUB_ENV"
           echo "PIP_REQUIRE_VIRTUALENV=true" >> "$GITHUB_ENV"
+          echo "OCTOBOT_TENTACLES_INSTALL_TEMP_DIR=$octobot_venv/tentacles-install" >> "$GITHUB_ENV"
+          echo "OCTOBOT_TENTACLES_REQUIREMENTS_INSTALL_TEMP_DIR=$octobot_venv/tentacles-requirements" >> "$GITHUB_ENV"
 
       - name: Download build wheel artifact
         uses: actions/download-artifact@v8
@@ -513,6 +600,9 @@ jobs:
             exit 1
           fi
           test -s "${runtime_tentacles}/.swarmhpc-baked-id"
+          "${CONTAINER_RUNTIME}" exec "${CONTAINER_NAME}" \
+            curl --fail --silent --show-error --max-time 10 http://127.0.0.1:5001/api/version \
+            | jq --exit-status --arg expected "OctoBot ${VERSION}" '. == $expected'
           test "$(cat "${runtime_tentacles}/.swarmhpc-baked-count")" -gt 0
           image_arch="$("${CONTAINER_RUNTIME}" image inspect --format '{{.Architecture}}' "${IMAGE}:${SHA}-${ARCH}")"
           test "${image_arch}" = "${ARCH}"
@@ -806,7 +896,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version-file: packages/tentacles/Services/Interfaces/node_web_interface/.nvmrc
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: docs/package-lock.json
 
@@ -884,7 +974,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version-file: packages/tentacles/Services/Interfaces/node_web_interface/.nvmrc
+          node-version-file: .nvmrc
           registry-url: 'https://registry.npmjs.org'
 
       - name: Upgrade npm (trusted publishing requires >= 11.5.1)
@@ -1179,6 +1269,7 @@ jobs:
       - build
       - tests
       - overlay
+      - extended_linter
       - docker
       - binary
       - tentacles

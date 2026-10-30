@@ -1,0 +1,25 @@
+name: Check upstream OctoBot release
+on:
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  current-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Compare the reviewed fork release with upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          declared=$(sed -n 's/^release=//p' neuralmimicry/octobot-overlay/UPSTREAM)
+          latest=$(gh api repos/Drakkar-Software/OctoBot/releases/latest --jq .tag_name)
+          printf 'Reviewed fork release: %s; upstream latest release: %s\n' "$declared" "$latest"
+          [[ -n "$declared" && "$declared" == "$latest" ]] || {
+            echo '::error::Review and test the newer upstream release before the next production redeployment.'
+            exit 1
+          }

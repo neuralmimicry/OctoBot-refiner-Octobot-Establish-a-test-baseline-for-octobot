@@ -1,5 +1,5 @@
 diff --git a/packages/tentacles/Evaluator/Strategies/dip_analyser_strategy_evaluator/tests/test_dip_analyser_strategy_evaluator.py b/packages/tentacles/Evaluator/Strategies/dip_analyser_strategy_evaluator/tests/test_dip_analyser_strategy_evaluator.py
-index ad97a6763..e48640f13 100644
+index ad97a6763990fcd5a47ece916440a59c874245d0..e48640f13385234607a6a0b8c2e4786efd52bd5f 100644
 --- a/packages/tentacles/Evaluator/Strategies/dip_analyser_strategy_evaluator/tests/test_dip_analyser_strategy_evaluator.py
 +++ b/packages/tentacles/Evaluator/Strategies/dip_analyser_strategy_evaluator/tests/test_dip_analyser_strategy_evaluator.py
 @@ -13,8 +13,10 @@
@@ -41,7 +41,7 @@ index ad97a6763..e48640f13 100644
      async def test_up_then_down(self):
          await self.run_test_up_then_down(None, skip_extended=True)
 diff --git a/packages/tentacles/Evaluator/Strategies/mixed_strategies_evaluator/tests/test_technical_analysis_strategy_evaluator.py b/packages/tentacles/Evaluator/Strategies/mixed_strategies_evaluator/tests/test_technical_analysis_strategy_evaluator.py
-index e45d99466..b27c6f5e2 100644
+index e45d99466a070f0f58c607c371efff43f5a27669..3beae808004bb9f7cbcf70b0a762add662feeaca 100644
 --- a/packages/tentacles/Evaluator/Strategies/mixed_strategies_evaluator/tests/test_technical_analysis_strategy_evaluator.py
 +++ b/packages/tentacles/Evaluator/Strategies/mixed_strategies_evaluator/tests/test_technical_analysis_strategy_evaluator.py
 @@ -14,6 +14,7 @@
@@ -95,7 +95,7 @@ index e45d99466..b27c6f5e2 100644
  
  async def test_default_run(strategy_tester):
 diff --git a/packages/tentacles/Trading/Blockchain_wallet/bitcoin/tests/test_bitcoin_blockchain_wallet.py b/packages/tentacles/Trading/Blockchain_wallet/bitcoin/tests/test_bitcoin_blockchain_wallet.py
-index 049ac5fdb..050c5254f 100644
+index 049ac5fdbfd065cb39581fe22d607a2c84ec0d9b..050c5254fadf0122de622747ae67a1dde76c0d68 100644
 --- a/packages/tentacles/Trading/Blockchain_wallet/bitcoin/tests/test_bitcoin_blockchain_wallet.py
 +++ b/packages/tentacles/Trading/Blockchain_wallet/bitcoin/tests/test_bitcoin_blockchain_wallet.py
 @@ -29,6 +29,37 @@ BINANCE_COLD_WALLET_ADDRESS = "34xp4vRoCGJym3xR7yCVPFHoCNxv4Twseo"

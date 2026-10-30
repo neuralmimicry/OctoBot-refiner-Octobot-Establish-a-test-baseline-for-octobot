@@ -14,14 +14,19 @@
 #  You should have received a copy of the GNU Lesser General Public
 #  License along with this library.
 import decimal
+import threading
+
+import mock
 import pytest
 
+import octobot_commons.asyncio_tools as asyncio_tools
 import octobot_trading.constants as constants
 import octobot_trading.errors as errors
 import octobot_trading.personal_data as trading_personal_data
 
 import octobot_commons.constants as commons_constants
 
+from tests import event_loop
 from tests.exchanges import backtesting_trader, backtesting_config, backtesting_exchange_manager, fake_backtesting
 
 
@@ -175,6 +180,34 @@ def test_get_usd_like_value(backtesting_trader):
     with pytest.raises(errors.MissingPriceDataError):
         value_converter.get_usd_like_value("ETH", decimal.Decimal("11"))
 
+    assert value_converter.get_usd_like_value("USDT@ETH", decimal.Decimal("11")) == decimal.Decimal("11")
+
+
+TICKER_WISE_SYMBOL = "BTC@BTC/USDT@ETH"
+
+
+class TestGetUsdLikeSymbolsFromSymbolsNetworkQualified:
+    def test_matches_qualified_currency_with_bare_usd_like_quote(self):
+        symbols = trading_personal_data.ValueConverter.get_usd_like_symbols_from_symbols(
+            "USDT@ETH",
+            [TICKER_WISE_SYMBOL],
+        )
+        assert TICKER_WISE_SYMBOL in symbols
+
+    def test_does_not_match_bare_currency_when_legs_are_qualified(self):
+        symbols = trading_personal_data.ValueConverter.get_usd_like_symbols_from_symbols(
+            "USDT",
+            [TICKER_WISE_SYMBOL],
+        )
+        assert symbols == []
+
+    def test_spot_symbol_matches_bare_base_currency(self):
+        symbols = trading_personal_data.ValueConverter.get_usd_like_symbols_from_symbols(
+            "BTC",
+            ["BTC/USDT"],
+        )
+        assert "BTC/USDT" in symbols
+
 
 def test_can_convert_symbol_to_usd_like():
     assert trading_personal_data.ValueConverter.can_convert_symbol_to_usd_like("BTC/USDT") is True
@@ -182,3 +215,66 @@ def test_can_convert_symbol_to_usd_like():
         f"{commons_constants.USD_LIKE_COINS[4]}/BTC"
     ) is True
     assert trading_personal_data.ValueConverter.can_convert_symbol_to_usd_like("BTC/ETH") is False
+
+
+class TestValueConverterUpdateLastPriceLogging:
+    @pytest.mark.asyncio
+    async def test_does_not_log_initialized_last_price_when_exchange_only(self):
+        exchange_manager = mock.Mock()
+        exchange_manager.exchange_name = "kraken"
+        exchange_manager.should_log_exchange_lifecycle_debug = mock.Mock(return_value=False)
+        portfolio_manager = mock.Mock()
+        portfolio_manager.exchange_manager = exchange_manager
+        value_converter = trading_personal_data.ValueConverter(portfolio_manager)
+        value_converter.logger = mock.Mock()
+
+        value_converter.update_last_price("BTC/USDT", decimal.Decimal("100"))
+
+        value_converter.logger.debug.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_logs_initialized_last_price_when_lifecycle_debug_enabled(self):
+        exchange_manager = mock.Mock()
+        exchange_manager.exchange_name = "kraken"
+        exchange_manager.should_log_exchange_lifecycle_debug = mock.Mock(return_value=True)
+        portfolio_manager = mock.Mock()
+        portfolio_manager.exchange_manager = exchange_manager
+        value_converter = trading_personal_data.ValueConverter(portfolio_manager)
+        value_converter.logger = mock.Mock()
+
+        value_converter.update_last_price("BTC/USDT", decimal.Decimal("100"))
+
+        value_converter.logger.debug.assert_called_once_with("Initialized last price for BTC/USDT")
+
+
+class TestValueConverterAskTickerFromWorkerThread:
+    def test_ask_ticker_from_thread_without_loop_schedules_on_bot_loop(self, backtesting_trader):
+        config, exchange_manager, trader = backtesting_trader
+        portfolio_manager = exchange_manager.exchange_personal_data.portfolio_manager
+        value_converter = portfolio_manager.portfolio_value_holder.value_converter
+        bot_main_loop = value_converter._bot_main_loop
+        symbols_to_add = ["USDC/USDT"]
+        schedule_calls = []
+
+        async def add_watched_symbols(symbols):
+            return symbols
+
+        exchange_manager.exchange_config.add_watched_symbols = add_watched_symbols
+
+        def run_coroutine_in_bot_loop(coroutine, async_loop):
+            schedule_calls.append(async_loop)
+            coroutine.close()
+
+        def worker():
+            with mock.patch.object(
+                asyncio_tools,
+                "run_coroutine_in_asyncio_loop",
+                side_effect=run_coroutine_in_bot_loop,
+            ):
+                value_converter._ask_ticker_data_for_currency(symbols_to_add)
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join()
+
+        assert schedule_calls == [bot_main_loop]

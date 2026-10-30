@@ -32,10 +32,40 @@ export interface MetaTemplateDef {
   steps: MetaTemplateStep[]
 }
 
+function isParamReferenceValue(value: string): boolean {
+  return (
+    value.startsWith("dependency::") ||
+    value.startsWith("param_dependency::")
+  )
+}
+
+/**
+ * Later-step overrides normally win on duplicate keys. Skip replacing an
+ * existing literal default when a later step only supplies a dependency ref.
+ */
+function shouldApplyDuplicateParamOverride(
+  existingDefault: string | undefined,
+  duplicateOverride: string,
+): boolean {
+  if (existingDefault === undefined) {
+    return true
+  }
+  if (
+    isParamReferenceValue(duplicateOverride) &&
+    !isParamReferenceValue(existingDefault)
+  ) {
+    return false
+  }
+  return true
+}
+
 /**
  * Resolve a MetaTemplateDef into a flat ActionTemplate.
  *
- * - Params are merged in step order; first-occurrence-wins on duplicate keys.
+ * - Params are merged in step order; first-occurrence-wins on duplicate keys,
+ *   but later-step overrides still update defaultValue (last-wins), except
+ *   when a later override is dependency:: / param_dependency:: and the
+ *   existing default is a literal (first literal wins for import UI).
  * - overrides are applied as defaultValue on the matching param.
  * - hiddenParams sets hidden:true; a hidden+required param without a
  *   defaultValue/override is an error (it would silently block submission).
@@ -60,7 +90,24 @@ export function resolveMetaTemplate(def: MetaTemplateDef): ActionTemplate {
     }
 
     for (const param of base.params) {
-      if (seenKeys.has(param.key)) continue
+      if (seenKeys.has(param.key)) {
+        const duplicateOverride = step.overrides?.[param.key]
+        if (duplicateOverride !== undefined) {
+          const existingParam = mergedParams.find(
+            (mergedParam) => mergedParam.key === param.key,
+          )
+          if (
+            existingParam &&
+            shouldApplyDuplicateParamOverride(
+              existingParam.defaultValue,
+              duplicateOverride,
+            )
+          ) {
+            existingParam.defaultValue = duplicateOverride
+          }
+        }
+        continue
+      }
       seenKeys.add(param.key)
 
       const override = step.overrides?.[param.key]

@@ -1,4 +1,5 @@
 # Upstream OctoBot ref the patch queue is generated against (production pin:
 # swarmhpc continuum_tenant_octobot_repo_version / host_vars/spirit.yml).
 repo=https://github.com/Drakkar-Software/OctoBot.git
-ref=dda44d930ce367c26ff6ed529993f70895d619eb
+ref=c45fdc2c95c5bd3d649251fa90c327e2e8f86b00
+release=3.0.0-beta3

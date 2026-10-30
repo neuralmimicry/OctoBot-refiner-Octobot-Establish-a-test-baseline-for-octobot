@@ -18,7 +18,7 @@ from collections.abc import Callable
 
 from fastapi import FastAPI
 from starfish_server.storage.base import AbstractObjectStore
-from starfish_server.router.route_builder import create_sync_router, SyncRouterOptions
+from starfish_server.router.route_builder import create_sync_router, SyncRouterOptions, RoleEnricher
 from starfish_server.config.schema import ConfigEndpointOptions, SyncConfig
 from starfish_protocol.plugins import ServerPlugin
 from starfish_server.router.cap_resolver import create_cap_cert_role_resolver, CapAuthError
@@ -30,6 +30,8 @@ import starfish_identities
 import octobot_commons.logging as octobot_commons_logging
 import octobot_sync.constants as constants
 import octobot_sync.sync as sync
+
+import octobot.community.node_journal as node_journal
 
 
 _VERSION_MARKER = f"/{constants.STARFISH_SERVER_MAJOR_VERSION}/"
@@ -121,9 +123,23 @@ def _build_role_resolver(is_allowed_user_id: Callable[[str], bool] | None):
         return resolver
 
     async def gated_resolver(request):
-        result = await resolver(request)
+        try:
+            result = await resolver(request)
+        except CapAuthError as err:
+            node_journal.record_sync_read_failed(
+                collection="user-data",
+                failure_reason="cap_auth",
+                error=err,
+            )
+            raise
         if result.identity and not is_allowed_user_id(result.identity):
-            raise CapAuthError(403, "user not allowed")
+            auth_error = CapAuthError(403, "user not allowed")
+            node_journal.record_sync_read_failed(
+                collection="user-data",
+                failure_reason="cap_auth",
+                error=auth_error,
+            )
+            raise auth_error
         return result
 
     return gated_resolver
@@ -136,6 +152,7 @@ def create_app(
     sync_config: SyncConfig | None = None,
     plugins: list[ServerPlugin] | None = None,
     external_host: str | None = None,
+    role_enricher: RoleEnricher | None = None,
 ):
     if sync_config is None:
         sync_config = sync.load_sync_config(collections_path)
@@ -149,6 +166,7 @@ def create_app(
             store=object_store,
             config=sync_config,
             role_resolver=_build_role_resolver(is_allowed_user_id),
+            role_enricher=role_enricher,
             config_endpoint=ConfigEndpointOptions(auth="public"),
             plugins=plugins,
         )

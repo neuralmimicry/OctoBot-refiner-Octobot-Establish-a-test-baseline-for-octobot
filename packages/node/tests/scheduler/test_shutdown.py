@@ -17,9 +17,11 @@ import pytest
 import mock
 
 import octobot_node.scheduler as scheduler_module
+import tests.scheduler as scheduler_test_util
 
 
 pytestmark = pytest.mark.asyncio
+temp_dbos_scheduler = scheduler_test_util.temp_dbos_scheduler
 
 
 @pytest.fixture(autouse=True)
@@ -42,11 +44,16 @@ class TestShutdownSchedulerAndTradingSignalChannel:
                 await scheduler_module.shutdown_scheduler_and_trading_signal_channel()
         stop_mock.assert_not_called()
 
-    async def test_initialize_scheduler_resets_shutdown_guard(self):
+    async def test_initialize_scheduler_resets_shutdown_guard(self, temp_dbos_scheduler):
+        # Register genuine DBOS decorators before replacing the instance. A
+        # first import under Mock permanently contaminates this worker's cache.
         init_call_order: list[str] = []
 
         def track_start() -> None:
             init_call_order.append("start")
+
+        async def track_register_queues(*args, **kwargs) -> None:
+            init_call_order.append("register_queues")
 
         async def track_register_schedules(*args, **kwargs) -> None:
             init_call_order.append("register_schedules")
@@ -62,18 +69,28 @@ class TestShutdownSchedulerAndTradingSignalChannel:
                     "start",
                     side_effect=track_start,
                 ):
-                    with mock.patch("octobot_node.scheduler.workflows.register_workflows"):
-                        with mock.patch.object(
-                            schedules_module,
-                            "register_schedules",
-                            side_effect=track_register_schedules,
-                        ):
-                            scheduler_module._shutdown_done = True
-                            await scheduler_module.initialize_scheduler()
+                    with mock.patch(
+                        "octobot_node.scheduler.queues.register_scheduler_queues_async",
+                        side_effect=track_register_queues,
+                    ):
+                        with mock.patch("octobot_node.scheduler.workflows.register_workflows"):
+                            with mock.patch.object(
+                                schedules_module,
+                                "register_schedules",
+                                side_effect=track_register_schedules,
+                            ):
+                                scheduler_module._shutdown_done = True
+                                await scheduler_module.initialize_scheduler()
         finally:
             scheduler_module.SCHEDULER.INSTANCE = previous_instance
         assert scheduler_module._shutdown_done is False
         assert init_call_order == [
             "start",
+            "register_queues",
             "register_schedules",
         ]
+        # Importing schedules while INSTANCE is mocked must not leave cached
+        # workflow classes decorated by mocks for later SQLite integration tests.
+        assert not isinstance(
+            schedules_module.global_view_workflow.GlobalViewRefreshWorkflow, mock.Mock
+        )

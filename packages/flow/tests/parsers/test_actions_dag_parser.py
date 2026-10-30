@@ -1,17 +1,9 @@
-import json
-
 import pytest
 
 import octobot_flow.entities
 import octobot_flow.errors
 import octobot_flow.parsers.actions_dag_parser as actions_dag_parser
 import octobot_trading.constants as trading_constants
-
-
-def dsl_if_error_decode_on_error(dsl_script: str) -> str:
-    remainder = dsl_script[dsl_script.index("on_error=") + len("on_error=") :].lstrip()
-    recovery_source, _end = json.JSONDecoder().raw_decode(remainder)
-    return recovery_source
 
 
 class TestResolveParamDependencies:
@@ -128,7 +120,7 @@ class TestGetBlockchainAndSpecificConfigs:
 
 
 class TestParseWalletCleanupIfError:
-    """`parse` / `_parse_generic_actions`: if_error wrapper after open wallet init."""
+    """`parse` / `_parse_generic_actions`: no if_error wrapper after open wallet init."""
 
     _wallet_address = "0x1234567890123456789012345678901234567890"
     _wallet_private_key = (
@@ -160,29 +152,19 @@ class TestParseWalletCleanupIfError:
     def _wait_action_after_parse(self, params: dict) -> octobot_flow.entities.DSLScriptActionDetails:
         return self._extract_wait_action(actions_dag_parser.ActionsDAGParser(params).parse())
 
-    def test_wraps_following_wait_when_close_wallet_on_exit_false(self):
+    def test_does_not_wrap_wait_when_close_wallet_on_exit_false(self):
         params = {
             **self._simulated_blockchain_wallet_init_then_wait_params(),
             "BLOCKCHAIN_INIT_CLOSE_WALLET_ON_EXIT": False,
         }
-        parser = actions_dag_parser.ActionsDAGParser(params)
-        wait_action = self._extract_wait_action(parser.parse())
-        assert wait_action.dsl_script.startswith("if_error(")
-        assert "on_error=" in wait_action.dsl_script
-        expected_recovery = parser._build_blockchain_wallet_init_dsl(
-            force_close_wallet_on_exit=True,
-        )
-        assert dsl_if_error_decode_on_error(wait_action.dsl_script) == expected_recovery
+        wait_action = self._wait_action_after_parse(params)
+        assert wait_action.dsl_script.startswith("wait(")
+        assert "if_error(" not in wait_action.dsl_script
 
-    def test_wraps_following_wait_when_close_wallet_on_exit_omitted(self):
-        params = self._simulated_blockchain_wallet_init_then_wait_params()
-        parser = actions_dag_parser.ActionsDAGParser(params)
-        wait_action = self._extract_wait_action(parser.parse())
-        assert wait_action.dsl_script.startswith("if_error(")
-        expected_recovery = parser._build_blockchain_wallet_init_dsl(
-            force_close_wallet_on_exit=True,
-        )
-        assert dsl_if_error_decode_on_error(wait_action.dsl_script) == expected_recovery
+    def test_does_not_wrap_wait_when_close_wallet_on_exit_omitted(self):
+        wait_action = self._wait_action_after_parse(self._simulated_blockchain_wallet_init_then_wait_params())
+        assert wait_action.dsl_script.startswith("wait(")
+        assert "if_error(" not in wait_action.dsl_script
 
     def test_does_not_wrap_when_close_wallet_on_exit_true(self):
         params = {
@@ -192,3 +174,135 @@ class TestParseWalletCleanupIfError:
         wait_action = self._wait_action_after_parse(params)
         assert wait_action.dsl_script.startswith("wait(")
         assert "if_error(" not in wait_action.dsl_script
+
+
+class TestCreateDslScriptFromTvFormatActionDetails:
+    def test_buy_market_action_details(self):
+        parser = actions_dag_parser.ActionsDAGParser({})
+        action_details = parser.create_dsl_script_from_tv_format_action_details(
+            "action_trade_1",
+            "buy",
+            {"SYMBOL": "BTC/USDC", "VOLUME": 0.01},
+        )
+        assert "market" in action_details.dsl_script
+        assert "buy" in action_details.dsl_script
+        assert "BTC/USDC" in action_details.dsl_script
+
+    def test_cancel_action_details(self):
+        parser = actions_dag_parser.ActionsDAGParser({})
+        action_details = parser.create_dsl_script_from_tv_format_action_details(
+            "action_cancel_1",
+            "cancel",
+            {"SYMBOL": "BTC/USDC"},
+        )
+        assert action_details.dsl_script.startswith("cancel_order(")
+        assert "BTC/USDC" in action_details.dsl_script
+
+
+class TestParseOrderSymbol:
+    _invalid_order_symbol = "invalid:symbol"
+
+    def test_get_reference_market_raises_invalid_automation_action_error(self):
+        params = actions_dag_parser.ActionsDAGParserParams.from_dict({
+            "ORDER_SYMBOL": self._invalid_order_symbol,
+        })
+        with pytest.raises(octobot_flow.errors.InvalidAutomationActionError) as raised:
+            params.get_reference_market()
+        assert self._invalid_order_symbol in str(raised.value)
+        assert isinstance(raised.value, octobot_flow.errors.ConfigurationError)
+        assert isinstance(raised.value.__cause__, (AttributeError, ValueError))
+
+
+class TestActionsDAGParserParseInvalidOrderSymbol:
+    _invalid_order_symbol = "invalid:symbol"
+
+    def _trade_params_with_invalid_symbol(self) -> dict:
+        return {
+            "ACTIONS": ["trade"],
+            "EXCHANGE_FROM": "binanceus",
+            "ORDER_SYMBOL": self._invalid_order_symbol,
+            "ORDER_AMOUNT": 1,
+            "ORDER_TYPE": "market",
+            "ORDER_SIDE": "BUY",
+            "SIMULATED_PORTFOLIO": {"BTC": 1},
+        }
+
+    def test_parse_raises_invalid_automation_action_error(self):
+        with pytest.raises(octobot_flow.errors.InvalidAutomationActionError) as raised:
+            actions_dag_parser.ActionsDAGParser(
+                self._trade_params_with_invalid_symbol()
+            ).parse()
+        assert self._invalid_order_symbol in str(raised.value)
+
+
+class TestCreateGenericActionUnknownAction:
+    def test_unknown_action_raises_invalid_automation_action_error(self):
+        unknown_action = "not_a_real_action"
+        with pytest.raises(octobot_flow.errors.InvalidAutomationActionError) as raised:
+            actions_dag_parser.ActionsDAGParser({"ACTIONS": [unknown_action]}).parse()
+        assert unknown_action in str(raised.value)
+
+
+class TestParseLoopUntilOrderClosed:
+    _exchange = "binanceus"
+
+    def _loop_until_order_closed_params(self, **overrides) -> dict:
+        params = {
+            "ACTIONS": [
+                actions_dag_parser.ActionType.TRADE.value,
+                actions_dag_parser.ActionType.LOOP_UNTIL_ORDER_CLOSED.value,
+            ],
+            "EXCHANGE_FROM": self._exchange,
+            "ORDER_SYMBOL": "ETH/BTC",
+            "ORDER_AMOUNT": 1,
+            "ORDER_TYPE": "market",
+            "ORDER_SIDE": "BUY",
+            "SIMULATED_PORTFOLIO": {"BTC": 1},
+            "ORDER_EXCHANGE_ID": "order-123",
+            "LOOP_INTERVAL": 50,
+            "LOOP_TIMEOUT": 100,
+            "LOOP_MAX_ATTEMPTS": 5,
+        }
+        params.update(overrides)
+        return params
+
+    def _loop_action_dsl(self, params: dict) -> str:
+        actions_dag = actions_dag_parser.ActionsDAGParser(params).parse()
+        loop_action = next(
+            action for action in actions_dag.actions if action.id == "action_loop_until_order_closed_2"
+        )
+        assert isinstance(loop_action, octobot_flow.entities.DSLScriptActionDetails)
+        return loop_action.dsl_script
+
+    def test_emits_max_retry_interval_when_loop_interval_max_set(self):
+        dsl_script = self._loop_action_dsl(
+            self._loop_until_order_closed_params(LOOP_INTERVAL_MAX=70)
+        )
+        assert "max_retry_interval=70" in dsl_script
+        assert "return_remaining_time=True" in dsl_script
+        assert ", 50.0, max_retry_interval=70.0," in dsl_script
+
+    def test_emits_max_retry_interval_when_loop_interval_max_is_string(self):
+        # JSON / task templates pass numeric params as strings; lexicographic "30" > "5" is False.
+        dsl_script = self._loop_action_dsl(
+            self._loop_until_order_closed_params(LOOP_INTERVAL="5", LOOP_INTERVAL_MAX="30")
+        )
+        assert ", 5.0, max_retry_interval=30.0," in dsl_script
+
+    def test_emits_max_retry_interval_when_template_style_string_intervals(self):
+        dsl_script = self._loop_action_dsl(
+            self._loop_until_order_closed_params(LOOP_INTERVAL="30", LOOP_INTERVAL_MAX="120")
+        )
+        assert ", 30.0, max_retry_interval=120.0," in dsl_script
+
+    def test_omits_max_retry_interval_without_loop_interval_max(self):
+        dsl_script = self._loop_action_dsl(self._loop_until_order_closed_params())
+        assert "max_retry_interval" not in dsl_script
+        assert ", 50.0, timeout=" in dsl_script
+
+    def test_loop_interval_max_less_than_loop_interval_raises(self):
+        with pytest.raises(octobot_flow.errors.InvalidAutomationActionError, match="LOOP_INTERVAL_MAX"):
+            actions_dag_parser.ActionsDAGParserParams.from_dict(
+                self._loop_until_order_closed_params(LOOP_INTERVAL=50, LOOP_INTERVAL_MAX=10)
+            )
+

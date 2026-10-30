@@ -17,6 +17,8 @@
 
 import typing
 
+import octobot.community.authentication as community_authentication
+import octobot_commons.logging as commons_logging
 import octobot_commons.singleton.singleton_class as singleton_class
 import octobot_sync.constants as sync_constants
 import octobot_protocol.models as protocol_models
@@ -127,3 +129,20 @@ class AccountProvider(
 
     def delete_exchange_config(self, address: str, config_id: str) -> None:
         self._delete_item_for_key(address, self.EXCHANGE_CONFIGS_KEY, config_id)
+
+    def list_registered_wallet_ids(self) -> list[str]:
+        return self._storage.list_wallet_storage_keys()
+
+    def list_collectable_wallet_ids(self) -> list[str]:
+        logger = commons_logging.get_logger(self.__class__.__name__)
+        community_auth = community_authentication.CommunityAuthentication.instance()
+        collectable_wallet_ids = []
+        for wallet_id in self.list_registered_wallet_ids():
+            if community_auth.has_wallet_for_user_id(wallet_id):
+                collectable_wallet_ids.append(wallet_id)
+            else:
+                logger.debug(
+                    "Skipping wallet %s: not registered locally",
+                    wallet_id,
+                )
+        return collectable_wallet_ids

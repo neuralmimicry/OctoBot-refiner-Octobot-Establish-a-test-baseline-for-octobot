@@ -20,8 +20,9 @@ import typing
 from fastapi import APIRouter, Body, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
 
-import octobot_node.config
+import octobot_node.agent_seed.demo_wallet as demo_agent_seed_wallet
 import octobot_node.models
+import octobot_node.enums as octobot_node_enums
 import octobot_node.protocol.debug as debug_protocol
 import octobot_node.protocol.user_actions as user_actions_protocol
 import octobot_node.scheduler
@@ -29,10 +30,18 @@ import octobot_protocol.models as protocol_models
 
 try:
     from tentacles.Services.Interfaces.node_api_interface.api.deps import CurrentUser  # type: ignore[no-redef]
-    from tentacles.Services.Interfaces.node_api_interface.api.user_id import evm_to_user_id  # type: ignore[no-redef]
+    from tentacles.Services.Interfaces.node_api_interface.api.wallet_route_helpers import (  # type: ignore[no-redef]
+        ensure_debug_routes_enabled,
+        ensure_scheduler_initialized,
+        resolve_user_id,
+    )
 except ImportError:
     from api.deps import CurrentUser  # type: ignore[no-redef]
-    from api.user_id import evm_to_user_id  # type: ignore[no-redef]
+    from api.wallet_route_helpers import (  # type: ignore[no-redef]
+        ensure_debug_routes_enabled,
+        ensure_scheduler_initialized,
+        resolve_user_id,
+    )
 
 router = APIRouter(tags=["debug"])
 
@@ -64,37 +73,6 @@ def _parse_user_action_payload(payload: typing.Any) -> protocol_models.UserActio
             detail="User action configuration is required",
         )
     return user_action
-
-
-def _resolve_wallet_address(
-    current_user: octobot_node.models.User,
-    wallet_address: typing.Optional[str],
-) -> str:
-    """Return the resolved EVM wallet address (normalized to lowercase)."""
-    if wallet_address is None:
-        return current_user.email
-    normalized_wallet_address = wallet_address.lower()
-    if normalized_wallet_address == current_user.email.lower():
-        return normalized_wallet_address
-    if current_user.is_superuser:
-        return normalized_wallet_address
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Wallet address does not belong to the authenticated user",
-    )
-
-
-def _resolve_user_id(
-    current_user: octobot_node.models.User,
-    wallet_address: typing.Optional[str],
-) -> str:
-    """Resolve EVM wallet address to the Starfish user_id used by the sync-core.
-
-    The HTTP debug API accepts the EVM address for user-facing consistency, but all
-    internal protocol and scheduler calls use the Starfish user_id.
-    """
-    evm_address = _resolve_wallet_address(current_user, wallet_address)
-    return evm_to_user_id(evm_address)
 
 
 def _extract_automation_parent_id(
@@ -133,11 +111,11 @@ async def _resolve_execution_user_id(
     wallet-scoped lookup. Admins may act on another wallet's automation without passing
     ``wallet_address``, but only after API-side authorization and owner resolution here.
     """
-    # Explicit wallet override: admin-gated in _resolve_wallet_address.
+    # Explicit wallet override: admin-gated in resolve_wallet_address.
     if wallet_address is not None:
-        return _resolve_user_id(current_user, wallet_address)
+        return resolve_user_id(current_user, wallet_address)
 
-    caller_user_id = _resolve_user_id(current_user, None)
+    caller_user_id = resolve_user_id(current_user, None)
     parent_automation_id = _extract_automation_parent_id(user_action)
     if parent_automation_id is None:
         return caller_user_id
@@ -181,22 +159,6 @@ async def _resolve_execution_user_id(
     )
 
 
-def _ensure_debug_routes_enabled() -> None:
-    if octobot_node.config.settings.is_node_side_encryption_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Debug routes are disabled when node-side encryption is enabled",
-        )
-
-
-def _ensure_scheduler_initialized() -> None:
-    if not octobot_node.scheduler.is_initialized():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Scheduler not initialized",
-        )
-
-
 @router.get("/", response_model=protocol_models.DebugState)
 async def get_debug(
     current_user: CurrentUser,
@@ -207,9 +169,9 @@ async def get_debug(
     Requires authenticated user (``CurrentUser`` / HTTP Basic wallet + passphrase).
     Missing or invalid credentials return 401.
     """
-    _ensure_debug_routes_enabled()
-    _ensure_scheduler_initialized()
-    resolved_user_id = _resolve_user_id(current_user, wallet_address)
+    ensure_debug_routes_enabled()
+    ensure_scheduler_initialized()
+    resolved_user_id = resolve_user_id(current_user, wallet_address)
     debug_state = await debug_protocol.get_debug_state(resolved_user_id)
     return JSONResponse(content=json.loads(debug_state.to_json()))
 
@@ -225,12 +187,26 @@ async def execute_user_action(
     Requires authenticated user (``CurrentUser`` / HTTP Basic wallet + passphrase).
     Missing or invalid credentials return 401.
     """
-    _ensure_debug_routes_enabled()
-    _ensure_scheduler_initialized()
+    ensure_debug_routes_enabled()
+    ensure_scheduler_initialized()
     user_action = _parse_user_action_payload(payload)
     resolved_user_id = await _resolve_execution_user_id(current_user, wallet_address, user_action)
     try:
-        await user_actions_protocol.execute_user_action(user_action, resolved_user_id)
+        demo_agent_seed_wallet.validate_demo_agent_seed_user_action(
+            resolved_user_id,
+            user_action,
+        )
+    except demo_agent_seed_wallet.DemoAgentSeedUserActionForbiddenError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(error),
+        ) from error
+    try:
+        await user_actions_protocol.execute_user_action(
+            user_action,
+            resolved_user_id,
+            source=octobot_node_enums.UserActionSource.DEBUG_API,
+        )
     except RuntimeError as error:
         if str(error) == "Scheduler is not initialized":
             raise HTTPException(

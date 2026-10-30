@@ -23,7 +23,18 @@ except ImportError:
     BASE_LOGS_FOLDER = "logs"
 
 AUTOMATION_LOGS_FOLDER = f"{BASE_LOGS_FOLDER}/automations"
+_AUTOMATION_LOG_FILE_MAX_MIB = 10
+AUTOMATION_LOG_FILE_MAX_BYTES = int(
+    os.getenv(
+        "AUTOMATION_LOG_FILE_MAX_BYTES",
+        str(_AUTOMATION_LOG_FILE_MAX_MIB * 1024 * 1024),
+    )
+)
+AUTOMATION_LOG_FILE_TRIM_LINES_FRACTION = 0.2
 PARENT_WORKFLOW_ID_LENGTH = 36 # length of a UUID4
+
+# Max tasks returned per GET /api/v1/tasks/ page (UI fetches page=1 at this limit).
+TASKS_LIST_MAX_PAGE_LIMIT = 500
 
 # default to 19 retry after 1, 2.5, 4.75, 8.125, 13.188, ... 2953.784 seconds (total of 4430 seconds)
 AUTOMATION_WORKFLOW_RETRY_INTERVAL_SECONDS = float(os.getenv("AUTOMATION_WORKFLOW_RETRY_INTERVAL_SECONDS", 1.0))
@@ -50,6 +61,9 @@ RUN_OCTOBOT_PROCESS_WAITING_TIME_SECONDS = float(
 RUN_OCTOBOT_PROCESS_PING_TIMEOUT_SECONDS = float(
     os.getenv("RUN_OCTOBOT_PROCESS_PING_TIMEOUT_SECONDS", 150.0)
 )
+
+# Max full trade dicts kept on automation.exchange_account_elements.trades; older ids archived in trade_summaries.
+AUTOMATION_LIVE_STATE_MAX_TRADES = 100
 
 TASKS_ENCRYPTION_ENV_VARS = [
     "TASKS_SERVER_RSA_PRIVATE_KEY",
@@ -80,6 +94,13 @@ AUTOMATION_STOP_CONFIRMATION_POLL_INTERVAL_SECONDS = float(
 
 DEFAULT_PORTFOLIO_VALUATION_UNIT = "USDT"
 
+GLOBAL_VIEW_AUTOMATION_TRIGGER_TIMEOUT_SECONDS = float(
+    os.getenv("GLOBAL_VIEW_AUTOMATION_TRIGGER_TIMEOUT_SECONDS", "300.0")
+)
+GLOBAL_VIEW_WORKFLOW_POLL_INTERVAL_SECONDS = float(
+    os.getenv("GLOBAL_VIEW_WORKFLOW_POLL_INTERVAL_SECONDS", "5")
+)
+
 NON_TRADING_GENERIC_PROCESS_OCTOBOT_STRATEGY_ID = "non-trading-generic-process-octobot-strategy"
 NON_TRADING_GENERIC_PROCESS_OCTOBOT_STRATEGY_VERSION = "1.0.0"
 
@@ -87,12 +108,27 @@ USER_ACTION_WORKFLOW_RESULT_TIMEOUT_SECONDS = float(
     os.getenv("USER_ACTION_WORKFLOW_RESULT_TIMEOUT_SECONDS", 120.0)
 )
 
+SIGNAL_EXECUTION_RESULT_TIMEOUT_SECONDS = float(
+    os.getenv("SIGNAL_EXECUTION_RESULT_TIMEOUT_SECONDS", USER_ACTION_WORKFLOW_RESULT_TIMEOUT_SECONDS)
+)
+
+SIGNAL_EXECUTION_RESULT_RECV_POLL_INTERVAL_SECONDS = float(
+    os.getenv("SIGNAL_EXECUTION_RESULT_RECV_POLL_INTERVAL_SECONDS", 0.05)
+)
+
 SCHEDULER_EXECUTOR_ID = str(uuid.uuid4()) # unique for each worker
 
 # Stable DBOS application_version for workflow recovery across OctoBot releases.
 # Bump only when workflow step order/semantics change in a breaking way.
+# WARNING: changing this value requires an explicit migration process — ask for confirmation before bumping.
 SCHEDULER_APPLICATION_VERSION = "octobot_node_v1"
 ALWAYS_ENSURE_SCHEDULER_APPLICATION_VERSION = bool((
     os.getenv("ALWAYS_ENSURE_SCHEDULER_APPLICATION_VERSION") or "false"
 ).lower() == "true")
-    
+# DBOS cron schedules (dbos cleanup, global view refresh, portfolio history).
+# Env: ENABLE_SCHEDULED_WORKFLOWS (default on unless set to "false").
+# When false: on scheduler init, existing schedules are deleted and not re-registered (no new cron triggers).
+# Does not cancel workflows already enqueued or running. Read at import; restart required to apply.
+ENABLE_SCHEDULED_WORKFLOWS = bool((
+    os.getenv("ENABLE_SCHEDULED_WORKFLOWS") or "true"
+).lower() != "false")

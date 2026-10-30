@@ -1,5 +1,5 @@
 diff --git a/tests/unit_tests/updater/test_updater.py b/tests/unit_tests/updater/test_updater.py
-index 969bb1d2..07de01ac 100644
+index 969bb1d20ffae9cdee86d70d1549ad7269eb5826..07de01ac345a483ab8c644e67f4b972b41ca54c3 100644
 --- a/tests/unit_tests/updater/test_updater.py
 +++ b/tests/unit_tests/updater/test_updater.py
 @@ -49,6 +49,12 @@ async def test_create_updater_from_api():

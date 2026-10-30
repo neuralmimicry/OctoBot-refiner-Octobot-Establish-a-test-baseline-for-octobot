@@ -14,12 +14,17 @@
 #  You should have received a copy of the GNU General Public License along
 #  with OctoBot. If not, see <https://www.gnu.org/licenses/>.
 
+import datetime
+
+import octobot_sync.constants as sync_constants
 import octobot_sync.sync.collection_providers as collection_providers
 import octobot_protocol.models as protocol_models
 
 import octobot_node.errors as node_errors
 import octobot_node.scheduler.user_actions.user_actions_executor.account.account_user_action_executor as account_user_action_executor
 import octobot_node.scheduler.user_actions.user_actions_executor.util.account_state_updater as account_state_updater
+
+import octobot.community.node_journal as node_journal
 
 
 def _get_create_account_payload(
@@ -52,4 +57,19 @@ class CreateAccountActionExecutor(account_user_action_executor.AccountUserAction
             self._user_id,
             checked_account,
         )
+        collection_providers.AccountTradingProvider.instance().save_state(
+            self._user_id,
+            checked_account.id,
+            protocol_models.AccountTradingState(
+                version=sync_constants.USER_ACCOUNTS_TRADING_STATE_VERSION,
+                account_trading=protocol_models.AccountTrading(
+                    updated_at=datetime.datetime.now(datetime.UTC),
+                ),
+            ),
+        )
         self._mark_user_action_completed(user_action)
+        node_journal.record_account_validated_from_account(
+            checked_account,
+            self._user_id,
+            user_action_id=user_action.id,
+        )

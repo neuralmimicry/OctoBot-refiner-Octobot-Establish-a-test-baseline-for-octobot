@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 
-import { type Task_Input as Task, TasksService } from "@/client"
+import { type Task, TasksService } from "@/client"
 import useCustomToast from "@/hooks/useCustomToast"
 import type { CSVRawResult } from "@/lib/csv"
 import ColumnMappingStep, {
@@ -128,8 +128,14 @@ export default function ImportTask({ onSuccess }: ImportTaskProps) {
         <ColumnMappingStep
           headers={csvData.headers}
           rows={csvData.rows}
+          initialActionRows={
+            actionRows.length > 0 ? actionRows : undefined
+          }
           onConfirm={handleMappingConfirm}
-          onBack={() => setCurrentStep("upload")}
+          onBack={() => {
+            setActionRows([])
+            setCurrentStep("upload")
+          }}
         />
       )}
 

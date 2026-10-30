@@ -1,6 +1,6 @@
 diff --git a/packages/tentacles/Services/Interfaces/web_interface/api/market_history.py b/packages/tentacles/Services/Interfaces/web_interface/api/market_history.py
 new file mode 100644
-index 000000000..467c0eacb
+index 0000000000000000000000000000000000000000..467c0eacbce93cf4d30090c2edc007ce2929ee2f
 --- /dev/null
 +++ b/packages/tentacles/Services/Interfaces/web_interface/api/market_history.py
 @@ -0,0 +1,110 @@
@@ -115,7 +115,7 @@ index 000000000..467c0eacb
 +            # The API contract remains explicit, never HTTP 200 plus JSON null.
 +            return util.get_rest_reply("Venue candle history unavailable", 503)
 diff --git a/packages/tentacles/Services/Interfaces/web_interface/api/trading.py b/packages/tentacles/Services/Interfaces/web_interface/api/trading.py
-index 81e5ef5f3..330beab3b 100644
+index 81e5ef5f3a7960c5c9fbb3ced64f2e889af031c6..330beab3bf8b85781a0dfc8ba4a51e13ec171eb5 100644
 --- a/packages/tentacles/Services/Interfaces/web_interface/api/trading.py
 +++ b/packages/tentacles/Services/Interfaces/web_interface/api/trading.py
 @@ -23,6 +23,7 @@ import tentacles.Services.Interfaces.web_interface.util as util
@@ -136,7 +136,7 @@ index 81e5ef5f3..330beab3b 100644
      @login.login_required_when_activated
 diff --git a/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_market_history.py b/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_market_history.py
 new file mode 100644
-index 000000000..7a992d3d1
+index 0000000000000000000000000000000000000000..7a992d3d1c5da0bb42412642d4a70faa0c663721
 --- /dev/null
 +++ b/packages/tentacles/Services/Interfaces/web_interface/tests/test_neuralmimicry_market_history.py
 @@ -0,0 +1,96 @@

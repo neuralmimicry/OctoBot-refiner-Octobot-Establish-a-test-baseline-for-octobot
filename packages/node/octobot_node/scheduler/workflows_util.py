@@ -20,28 +20,16 @@ import dbos as dbos_lib
 
 import octobot_commons.logging
 import octobot_protocol.models as protocol_models
-import octobot_node.config
 import octobot_node.constants
 import octobot_node.enums as octobot_node_enums
 import octobot_node.models as models
-import octobot_node.scheduler.task_context as task_context
 import octobot_node.scheduler.workflows.params as params
-
-
-try:
-    import octobot_flow.entities
-    import octobot_flow.parsers
-except ImportError:
-    octobot_flow = None  # type: ignore
-    octobot_commons.logging.get_logger("octobot_node.scheduler.workflows_util").warning(
-        "octobot_flow is not installed, workflows utilities will not be available"
-    )
 
 logger = octobot_commons.logging.get_logger("octobot_node.scheduler.workflows_util")
 
-STATE_KEY = "state"
+_SCHEDULER_HYDRATE_WORKFLOW_IDS_CHUNK_SIZE = 200
 
-_USER_ACTION_TERMINAL_WORKFLOW_STATUSES = (
+DBOS_TERMINAL_WORKFLOW_STATUSES = (
     dbos_lib.WorkflowStatusString.SUCCESS,
     dbos_lib.WorkflowStatusString.ERROR,
     dbos_lib.WorkflowStatusString.CANCELLED,
@@ -50,7 +38,7 @@ _USER_ACTION_TERMINAL_WORKFLOW_STATUSES = (
 _USER_ACTION_INPUT_WORKFLOW_STATUSES = tuple(
     workflow_status
     for workflow_status in dbos_lib.WorkflowStatusString
-    if workflow_status not in _USER_ACTION_TERMINAL_WORKFLOW_STATUSES
+    if workflow_status not in DBOS_TERMINAL_WORKFLOW_STATUSES
 )
 
 
@@ -58,8 +46,100 @@ def get_user_action_input_workflow_statuses() -> tuple[dbos_lib.WorkflowStatusSt
     return _USER_ACTION_INPUT_WORKFLOW_STATUSES
 
 
-def get_user_action_terminal_workflow_statuses() -> tuple[dbos_lib.WorkflowStatusString, ...]:
-    return _USER_ACTION_TERMINAL_WORKFLOW_STATUSES
+def wallet_filter_queue_for_workflow(
+    workflow_name: octobot_node_enums.SchedulerWorkflowNames,
+) -> typing.Optional[octobot_node_enums.SchedulerQueues]:
+    if workflow_name == octobot_node_enums.SchedulerWorkflowNames.EXECUTE_USER_ACTION:
+        return octobot_node_enums.SchedulerQueues.USER_ACTION_QUEUE
+    if workflow_name == octobot_node_enums.SchedulerWorkflowNames.EXECUTE_AUTOMATION:
+        return octobot_node_enums.SchedulerQueues.AUTOMATION_WORKFLOW_QUEUE
+    return None
+
+
+async def list_scheduler_workflows_async(
+    dbos_instance,
+    workflow_name: octobot_node_enums.SchedulerWorkflowNames,
+    statuses: typing.Optional[list[dbos_lib.WorkflowStatusString]],
+    user_id: typing.Optional[str],
+    *,
+    load_output: bool,
+    load_input: bool = False,
+    sort_desc: typing.Optional[bool] = None,
+    limit: typing.Optional[int] = None,
+    workflow_ids: typing.Optional[list[str]] = None,
+    workflow_id_prefix: typing.Optional[str | list[str]] = None,
+    queues_only: bool = False,
+) -> list[dbos_lib.WorkflowStatus]:
+    """
+    List DBOS workflows by registered workflow name (not enqueue queue).
+
+    DBOS omits ``workflow_status.input`` / ``.output`` unless ``load_input`` / ``load_output`` are
+    true. Defaults stay false for cheap scans (retention, counts); callers that parse task content
+    must pass ``load_input=True`` (and output when needed). Prefer listing metadata first and
+    bulk-hydrating with ``workflow_ids=`` when only a subset needs payloads.
+
+    When ``queues_only=True``, DBOS lists queued workflows only. Pending-only callers pass
+    ``statuses=None``. If both ``queues_only=True`` and ``statuses`` are set, both are forwarded
+    to DBOS (``queues_only`` and mapped ``status``).
+    """
+    list_kwargs: dict[str, typing.Any] = {
+        "name": workflow_name.value,
+        "load_output": load_output,
+        "load_input": load_input,
+    }
+    if queues_only:
+        list_kwargs["queues_only"] = True
+    if statuses is not None:
+        list_kwargs["status"] = [status.value for status in statuses]
+    if sort_desc is not None:
+        list_kwargs["sort_desc"] = sort_desc
+    if limit is not None:
+        list_kwargs["limit"] = limit
+    if workflow_ids is not None:
+        list_kwargs["workflow_ids"] = workflow_ids
+    if workflow_id_prefix is not None:
+        list_kwargs["workflow_id_prefix"] = workflow_id_prefix
+    workflows = await dbos_instance.list_workflows_async(**list_kwargs)
+    wallet_queue = wallet_filter_queue_for_workflow(workflow_name)
+    if user_id is not None and wallet_queue is not None:
+        workflows = filter_by_wallet(workflows, user_id, wallet_queue)
+    return workflows
+
+
+async def hydrate_scheduler_workflows_async(
+    dbos_instance,
+    workflow_name: octobot_node_enums.SchedulerWorkflowNames,
+    workflow_rows: list[dbos_lib.WorkflowStatus],
+    workflow_ids: list[str],
+    *,
+    load_input: bool,
+    load_output: bool,
+) -> None:
+    """Merge DBOS input/output payloads onto existing metadata rows (in place)."""
+    if not workflow_ids or not workflow_rows:
+        return
+    rows_by_id = {workflow_row.workflow_id: workflow_row for workflow_row in workflow_rows}
+    ids_to_fetch = [workflow_id for workflow_id in workflow_ids if workflow_id in rows_by_id]
+    chunk_size = _SCHEDULER_HYDRATE_WORKFLOW_IDS_CHUNK_SIZE
+    for chunk_start in range(0, len(ids_to_fetch), chunk_size):
+        chunk_ids = ids_to_fetch[chunk_start : chunk_start + chunk_size]
+        hydrated_rows = await list_scheduler_workflows_async(
+            dbos_instance,
+            workflow_name,
+            None,
+            None,
+            load_output=load_output,
+            load_input=load_input,
+            workflow_ids=chunk_ids,
+        )
+        for hydrated_row in hydrated_rows:
+            metadata_row = rows_by_id.get(hydrated_row.workflow_id)
+            if metadata_row is None:
+                continue
+            if load_input:
+                metadata_row.input = hydrated_row.input
+            if load_output:
+                metadata_row.output = hydrated_row.output
 
 
 @dataclasses.dataclass
@@ -250,12 +330,6 @@ def get_latest_workflow(
     return get_latest_child_workflow(workflows)
 
 
-def get_automation_copied_strategy_ids(workflow_status: dbos_lib.WorkflowStatus) -> list[str]:
-    if reader := get_automation_state_reader(workflow_status):
-        return reader.get_automation_copied_strategy_ids()
-    return []
-
-
 def get_workflows_by_parent_id(
     workflows: list[dbos_lib.WorkflowStatus]
 ) -> dict[str, list[dbos_lib.WorkflowStatus]]:
@@ -266,23 +340,38 @@ def get_workflows_by_parent_id(
     return by_parent
 
 
-def get_automation_state_reader(workflow_status: dbos_lib.WorkflowStatus) -> typing.Optional["octobot_flow.parsers.AutomationStateReader"]:
-    """Get the resolved automation state for a workflow row (input or terminal output)."""
-    try:
-        import octobot_flow.entities
-        import octobot_flow.parsers
-    except ImportError:
+def resolve_automation_result_for_group(
+    group: list[dbos_lib.WorkflowStatus],
+) -> typing.Optional[dbos_lib.WorkflowStatus]:
+    """
+    Pick the terminal child workflow row used for batch export of one parent automation.
+
+    - Latest child is CANCELLED → that row (state from workflow input, not prior children).
+    - Else latest SUCCESS child that has DBOS ``output`` (may not be the chronologically latest child).
+    - Else latest ERROR child by child index.
+    - Else ``None`` (no row with exportable or error-signalling terminal status).
+    """
+    if not group:
         return None
-    if state_dict := get_automation_state_dict(workflow_status):
-        return octobot_flow.parsers.AutomationStateReader(
-            octobot_flow.entities.AutomationState.from_dict(state_dict)
-        )
-    return None
-
-
-def get_automation_id(workflow_status: dbos_lib.WorkflowStatus) -> typing.Optional[str]:
-    if state_dict := get_automation_state_dict(workflow_status):
-        return state_dict.get("automation", {}).get("metadata", {}).get("automation_id")
+    latest = get_latest_workflow(group)
+    if latest.status == dbos_lib.WorkflowStatusString.CANCELLED.value:
+        return latest
+    # Prefer SUCCESS iterations that persisted workflow output over newer failures without output.
+    success_with_output = [
+        workflow_row
+        for workflow_row in group
+        if workflow_row.status == dbos_lib.WorkflowStatusString.SUCCESS.value and workflow_row.output
+    ]
+    if success_with_output:
+        return get_latest_workflow(success_with_output)
+    # No success output: surface the latest ERROR child (export may return error-only payload).
+    error_rows = [
+        workflow_row
+        for workflow_row in group
+        if workflow_row.status == dbos_lib.WorkflowStatusString.ERROR.value
+    ]
+    if error_rows:
+        return sorted(error_rows, key=_automation_child_workflow_sort_key)[-1]
     return None
 
 
@@ -334,17 +423,6 @@ def get_resolved_automation_task(workflow_status: dbos_lib.WorkflowStatus) -> ty
     return input_task
 
 
-def get_automation_state_dict(workflow_status: dbos_lib.WorkflowStatus) -> typing.Optional[dict]:
-    resolved_task = get_resolved_automation_task(workflow_status)
-    if resolved_task is None:
-        return None
-    with task_context.encrypted_task(resolved_task):
-        try:
-            return get_automation_dict(resolved_task.content)[STATE_KEY]
-        except ValueError:
-            return None
-
-
 def get_automation_input_task(workflow_status: dbos_lib.WorkflowStatus) -> typing.Optional[models.Task]:
     if inputs := get_automation_workflow_inputs(workflow_status):
         return inputs.task
@@ -368,46 +446,3 @@ def get_automation_workflow_inputs(workflow_status: dbos_lib.WorkflowStatus) -> 
 def get_user_action_workflow_inputs(workflow_status: dbos_lib.WorkflowStatus) -> typing.Optional[params.UserActionWorkflowInputs]:
     resolved = resolve_user_action_workflow_inputs(workflow_status)
     return resolved.inputs
-
-
-def get_automation_dict(description: typing.Union[str, dict]) -> dict:
-    if isinstance(description, str):
-        description = json.loads(description)
-    if isinstance(description, dict) and (state := description.get(STATE_KEY)) and isinstance(state, dict):
-        return description
-    raise ValueError("No automation state found in description")
-
-
-def patch_task_content_degraded_state(
-    task_content: str,
-    error_status: str,
-    error_message: str,
-    *,
-    since: float,
-) -> str:
-    if octobot_flow is None:
-        raise RuntimeError("octobot_flow is required to patch automation degraded state")
-    description = get_automation_dict(task_content)
-    automation_state = octobot_flow.entities.AutomationState.from_dict(description[STATE_KEY])
-    existing_degraded_state = automation_state.automation.execution.degraded_state
-    degraded_since = (
-        existing_degraded_state.since
-        if existing_degraded_state.since > 0
-        else since
-    )
-    automation_state.automation.execution.degraded_state = octobot_flow.entities.DegradedStateDetails(
-        since=degraded_since,
-        error=error_status,
-        reason=error_message,
-    )
-    description[STATE_KEY] = automation_state.to_dict(include_default_values=False)
-    return json.dumps(description)
-
-
-async def get_automation_workflow_status(automation_id: str) -> dbos_lib.WorkflowStatus:
-    for workflow_status in await dbos_lib.DBOS.list_workflows_async(status=[
-        dbos_lib.WorkflowStatusString.PENDING.value, dbos_lib.WorkflowStatusString.ENQUEUED.value
-    ]):
-        if get_automation_id(workflow_status) == automation_id:
-            return workflow_status
-    raise ValueError(f"No automation workflow found for automation_id: {automation_id}")

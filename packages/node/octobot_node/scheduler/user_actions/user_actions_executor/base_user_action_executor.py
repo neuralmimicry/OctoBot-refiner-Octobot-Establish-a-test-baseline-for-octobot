@@ -21,6 +21,8 @@ import octobot_commons.logging as logging
 
 import octobot_node.scheduler.user_actions.user_action_post_actions as user_action_post_actions
 
+import octobot.community.node_journal as node_journal
+
 
 class UserActionExecutor(abc.ABC):
     """
@@ -33,6 +35,7 @@ class UserActionExecutor(abc.ABC):
     def __init__(self, user_id: str):
         self._user_id = user_id
         self.post_actions: user_action_post_actions.UserActionPostActions = user_action_post_actions.UserActionPostActions()
+        self.signal_execution_await_context = None
 
     def _get_error_message(self, exc: BaseException) -> str:
         """
@@ -91,6 +94,10 @@ class UserActionExecutor(abc.ABC):
                 f"User action execution failed: {user_action.id}: {exc} ({exc.__class__.__name__})"
             )
             self._apply_execution_failure(user_action, exc)
+            node_journal.record_executor_failure(
+                user_action,
+                error=exc,
+            )
             raise
         finally:
             await self.after_execute(user_action)

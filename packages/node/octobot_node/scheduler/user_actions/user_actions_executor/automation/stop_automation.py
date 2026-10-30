@@ -21,6 +21,8 @@ import octobot_node.scheduler.user_actions.user_actions_executor.automation.auto
 import octobot_node.scheduler as scheduler_module
 import octobot_node.scheduler.tasks as scheduler_tasks
 
+import octobot.community.node_journal as node_journal
+
 
 def _get_stop_automation_payload(
     user_action: protocol_models.UserAction,
@@ -38,11 +40,19 @@ def _get_stop_automation_payload(
     return payload
 
 
-def _stop_priority_action_dict(*, user_action: protocol_models.UserAction) -> list[dict]:
+def _stop_priority_action_dict(
+    *,
+    user_action: protocol_models.UserAction,
+    stop_payload: protocol_models.StopAutomationConfiguration,
+) -> list[dict]:
+    if stop_payload.cancel_orders:
+        dsl_script = "stop_automation(cancel_orders=True)"
+    else:
+        dsl_script = "stop_automation()"
     return [
         {
             "id": f"action_stop_priority_{user_action.id}",
-            "dsl_script": "stop_automation()",
+            "dsl_script": dsl_script,
         }
     ]
 
@@ -56,10 +66,15 @@ class StopAutomationActionExecutor(automation_user_action_executor.AutomationUse
             raise RuntimeError("Scheduler is not initialized")
 
         stop_payload = _get_stop_automation_payload(user_action)
-        actions = _stop_priority_action_dict(user_action=user_action)
+        actions = _stop_priority_action_dict(user_action=user_action, stop_payload=stop_payload)
         await scheduler_tasks.send_stop_actions_to_active_automation(
             stop_payload.id,
             self._user_id,
             actions,
         )
         self._mark_user_action_completed(user_action)
+        node_journal.record_automation_stopped(
+            automation_id=stop_payload.id,
+            cancel_orders=bool(stop_payload.cancel_orders),
+            user_action_id=user_action.id,
+        )
