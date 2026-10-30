@@ -191,6 +191,10 @@ jobs:
         echo "$octobot_venv/bin" >> "$GITHUB_PATH"
         echo "VIRTUAL_ENV=$octobot_venv" >> "$GITHUB_ENV"
         echo "PIP_REQUIRE_VIRTUALENV=true" >> "$GITHUB_ENV"
+        # Install locks protect each workspace, so shared-host jobs also need
+        # private extraction/requirements paths instead of the /tmp defaults.
+        echo "OCTOBOT_TENTACLES_INSTALL_TEMP_DIR=$octobot_venv/tentacles-install" >> "$GITHUB_ENV"
+        echo "OCTOBOT_TENTACLES_REQUIREMENTS_INSTALL_TEMP_DIR=$octobot_venv/tentacles-requirements" >> "$GITHUB_ENV"
 
     - name: Set up Node.js
       if: env.USES_TENTACLES == 'true'
@@ -481,6 +485,8 @@ jobs:
           echo "$octobot_venv/bin" >> "$GITHUB_PATH"
           echo "VIRTUAL_ENV=$octobot_venv" >> "$GITHUB_ENV"
           echo "PIP_REQUIRE_VIRTUALENV=true" >> "$GITHUB_ENV"
+          echo "OCTOBOT_TENTACLES_INSTALL_TEMP_DIR=$octobot_venv/tentacles-install" >> "$GITHUB_ENV"
+          echo "OCTOBOT_TENTACLES_REQUIREMENTS_INSTALL_TEMP_DIR=$octobot_venv/tentacles-requirements" >> "$GITHUB_ENV"
 
       - name: Download build wheel artifact
         uses: actions/download-artifact@v8
